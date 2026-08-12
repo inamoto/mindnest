@@ -55,6 +55,34 @@ async function downloadJson(page: Page) {
 }
 
 
+test('updates node colors from keyboard shortcuts', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  const rootNode = page.locator('jmnode:visible', { hasText: 'MindNest' })
+  await rootNode.click()
+
+  await page.keyboard.press('Control+1')
+  await expect.poll(async () => rootNode.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(220, 38, 38)')
+  await expect(page.locator('.jsmind-editor')).toBeHidden()
+  await expect(page.getByLabel('Markdown memo editor')).toBeHidden()
+
+  await page.keyboard.press('Control+2')
+  await expect.poll(async () => rootNode.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(234, 179, 8)')
+  await expect(page.locator('.jsmind-editor')).toBeHidden()
+  await expect(page.getByLabel('Markdown memo editor')).toBeHidden()
+
+  await page.keyboard.press('Control+3')
+  await expect.poll(async () => rootNode.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(22, 163, 74)')
+  await expect(page.locator('.jsmind-editor')).toBeHidden()
+  await expect(page.getByLabel('Markdown memo editor')).toBeHidden()
+
+  await page.keyboard.press('Control+0')
+  await expect.poll(async () => rootNode.evaluate((element) => element.style.getPropertyValue('--node-bg'))).toBe('')
+  await expect(page.locator('.jsmind-editor')).toBeHidden()
+  await expect(page.getByLabel('Markdown memo editor')).toBeHidden()
+})
+
 test('updates node colors from context menu', async ({ page }) => {
   await resetAppStorage(page)
   await page.reload()
@@ -93,6 +121,24 @@ test('persists node colors after reload', async ({ page }) => {
   await expect.poll(async () => reloadedRoot.evaluate((element) => getComputedStyle(element).backgroundColor)).toBe('rgb(220, 38, 38)')
   await expect.poll(async () => reloadedRoot.evaluate((element) => getComputedStyle(element).borderColor)).toBe('rgb(220, 38, 38)')
   await expect.poll(async () => reloadedRoot.evaluate((element) => getComputedStyle(element).color)).toBe('rgb(255, 255, 255)')
+})
+
+test('edits Gantt task fields from Gantt mode', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.getByRole('button', { name: 'Gantt' }).click()
+  await expect(page.getByLabel('Gantt chart mode')).toBeVisible()
+
+  const rootRow = page.getByLabel('Gantt task fields').locator('.gantt-inline-row').first()
+  await rootRow.getByLabel('From MindNest').fill('2026-01-01')
+  await rootRow.getByLabel('To MindNest').fill('2026-01-10')
+  await rootRow.getByLabel('Assignee MindNest').fill('Inamoto')
+  await rootRow.getByLabel('Progress MindNest').fill('40')
+
+  await expect(rootRow.getByLabel('Assignee MindNest')).toHaveValue('Inamoto')
+  await expect(rootRow.getByLabel('Progress MindNest')).toHaveValue('40')
+  await expect(page.locator('.gantt-chart-panel')).toContainText('MindNest')
 })
 
 test('updates theme and font settings', async ({ page }) => {
@@ -145,6 +191,26 @@ test('renders markdown math fractions with KaTeX layout', async ({ page }) => {
   await expect(displayMath.locator('.mfrac')).toHaveCount(2)
   await expect(displayMath.locator('.frac-line').first()).toBeVisible()
   await expect(displayMath.locator('.mord.textstyle')).toHaveCount(0)
+})
+
+test('keeps cursor position after entering memo editor with Ctrl+M', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.getByRole('button', { name: 'Edit' }).click()
+  const editor = page.getByLabel('Markdown memo editor')
+  await editor.fill('abcde')
+  await page.keyboard.press('Control+M')
+  await page.keyboard.press('Control+M')
+  await editor.evaluate((element) => {
+    const textarea = element as HTMLTextAreaElement
+    textarea.setSelectionRange(2, 2)
+  })
+  await editor.type('X')
+
+  await expect(editor).toBeFocused()
+  await expect(editor).toHaveValue('abXcde')
+  await expect.poll(async () => editor.evaluate((element) => (element as HTMLTextAreaElement).selectionStart)).toBe(3)
 })
 
 test('keeps cursor position in memo editor when pressing Backspace', async ({ page }) => {
@@ -202,6 +268,47 @@ test('keeps focus in memo editor when pressing Enter and Tab', async ({ page }) 
   await expect(page.locator('.jsmind-editor')).toBeHidden()
 })
 
+test('creates child MindMap with Ctrl+Enter when missing', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'ShortcutChildMap')
+  await page.locator('jmnode', { hasText: 'ShortcutChildMap' }).click()
+
+  await page.keyboard.press('Control+Enter')
+  await expect(breadcrumb(page).getByText('/ ShortcutChildMap')).toBeVisible()
+  await expect(page.locator('jmnode:visible', { hasText: 'ShortcutChildMap' })).toBeVisible()
+
+  await breadcrumb(page).getByRole('button', { name: 'MindNest' }).click()
+  await page.locator('jmnode:visible', { hasText: 'ShortcutChildMap' }).click()
+  await expect(page.getByRole('dialog', { name: 'ShortcutChildMap child MindMap' })).toBeVisible()
+  await page.getByRole('button', { name: 'Open MindMap' }).click()
+  await expect(breadcrumb(page).getByText('/ ShortcutChildMap')).toBeVisible()
+})
+
+test('deletes child MindMap with Ctrl+Delete', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'ShortcutDeleteMap')
+  await page.locator('jmnode', { hasText: 'ShortcutDeleteMap' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Create MindMap' }).evaluate((element) => (element as HTMLButtonElement).click())
+  await expect(page.locator('jmnode:visible', { hasText: 'ShortcutDeleteMap' })).toContainText('↗')
+
+  await page.locator('jmnode:visible', { hasText: 'ShortcutDeleteMap' }).click()
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('Delete child MindMap')
+    await dialog.accept()
+  })
+  await page.keyboard.press('Control+Delete')
+
+  await expect(page.locator('jmnode:visible', { hasText: 'ShortcutDeleteMap' })).not.toContainText('↗')
+})
+
 test('confirms before deleting a node with child MindMap using Delete key', async ({ page }) => {
   await resetAppStorage(page)
   await page.reload()
@@ -220,6 +327,42 @@ test('confirms before deleting a node with child MindMap using Delete key', asyn
   })
   await page.keyboard.press('Delete')
   await expect(page.locator('jmnode:visible', { hasText: 'DeleteKeyChild' })).toBeVisible()
+})
+
+test('renames a node on double click', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'DoubleClickChild')
+  await page.locator('jmnode', { hasText: 'DoubleClickChild' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Create MindMap' }).evaluate((element) => (element as HTMLButtonElement).click())
+
+  await page.locator('jmnode', { hasText: 'DoubleClickChild' }).dblclick()
+  await renameEditingNode(page, 'RenamedByDoubleClick')
+
+  await expect(breadcrumb(page).getByText('MindNest')).toBeVisible()
+  await expect(breadcrumb(page).getByText('/ RenamedByDoubleClick')).toBeHidden()
+  await expect(page.locator('jmnode', { hasText: 'RenamedByDoubleClick' })).toContainText('↗')
+})
+
+test('opens child MindMap from selection popover', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'PopoverChild')
+  await page.locator('jmnode', { hasText: 'PopoverChild' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Create MindMap' }).evaluate((element) => (element as HTMLButtonElement).click())
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click()
+  await page.locator('jmnode', { hasText: 'PopoverChild' }).click()
+  await expect(page.getByRole('dialog', { name: 'PopoverChild child MindMap' })).toBeVisible()
+  await page.getByRole('button', { name: 'Open MindMap' }).click()
+
+  await expect(breadcrumb(page).getByText('/ PopoverChild')).toBeVisible()
 })
 
 test('exports memo child MindMap reference and node colors', async ({ page }) => {

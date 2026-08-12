@@ -5,6 +5,11 @@ export interface MindMapNodeData {
   childMindMapId?: string
   'background-color'?: string
   'foreground-color'?: string
+  startDate?: string
+  dueDate?: string
+  assignee?: string
+  progress?: number
+  dependsOn?: string[]
   children?: MindMapNodeData[]
 }
 

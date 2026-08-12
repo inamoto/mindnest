@@ -54,9 +54,20 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
       return
     }
 
+    const initialValueLength = editorRef.current?.value.length
     const timeoutId = window.setTimeout(() => {
-      editorRef.current?.focus()
-      editorRef.current?.setSelectionRange(editorRef.current.value.length, editorRef.current.value.length)
+      const editor = editorRef.current
+
+      if (!editor) {
+        return
+      }
+
+      const wasAlreadyFocused = document.activeElement === editor
+      editor.focus()
+
+      if (!wasAlreadyFocused && document.activeElement === editor && editor.value.length === initialValueLength) {
+        editor.setSelectionRange(editor.value.length, editor.value.length)
+      }
     }, 0)
 
     return () => window.clearTimeout(timeoutId)

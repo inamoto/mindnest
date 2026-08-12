@@ -14,8 +14,7 @@ interface MindMapTreeProps {
   onUndo: () => void
   onRedo: () => void
   onMindChange: (mind: JsMindData, selectedNodeId?: string) => void
-  onSelectNode: (nodeId: string) => void
-  onOpenChildMindMap: (node: MindMapNodeData) => void
+  onSelectNode: (nodeId: string, position?: { x: number; y: number; placement: 'bottom' | 'right' }) => void
   onNodeContextMenu: (nodeId: string, position: { x: number; y: number }) => void
 }
 
@@ -47,6 +46,32 @@ function shouldFocusMindMap(container: HTMLElement) {
   const activeElement = document.activeElement
 
   return !activeElement || activeElement === document.body || container.contains(activeElement)
+}
+
+function getNodePopoverPosition(container: HTMLElement, root: MindMapNodeData, nodeId: string) {
+  const nodeElement = container.querySelector<HTMLElement>(`jmnode[nodeid="${CSS.escape(nodeId)}"]`)
+
+  if (!nodeElement) {
+    return undefined
+  }
+
+  const node = findNode(root, nodeId)
+  const isLeafNode = !node?.children?.length
+  const rect = nodeElement.getBoundingClientRect()
+
+  if (isLeafNode) {
+    return {
+      x: rect.right + 8,
+      y: rect.top + rect.height / 2,
+      placement: 'right' as const,
+    }
+  }
+
+  return {
+    x: rect.left + rect.width / 2,
+    y: rect.bottom + 8,
+    placement: 'bottom' as const,
+  }
 }
 
 type ZoomableJsMind = jsMind & {
@@ -90,23 +115,20 @@ export function MindMapTree({
   onRedo,
   onMindChange,
   onSelectNode,
-  onOpenChildMindMap,
   onNodeContextMenu,
 }: MindMapTreeProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const jsMindRef = useRef<jsMind | null>(null)
   const onSelectNodeRef = useRef(onSelectNode)
   const onMindChangeRef = useRef(onMindChange)
-  const onOpenChildMindMapRef = useRef(onOpenChildMindMap)
   const onNodeContextMenuRef = useRef(onNodeContextMenu)
   const [zoomPercent, setZoomPercent] = useState(100)
 
   useEffect(() => {
     onMindChangeRef.current = onMindChange
     onSelectNodeRef.current = onSelectNode
-    onOpenChildMindMapRef.current = onOpenChildMindMap
     onNodeContextMenuRef.current = onNodeContextMenu
-  }, [onMindChange, onSelectNode, onOpenChildMindMap, onNodeContextMenu])
+  }, [onMindChange, onSelectNode, onNodeContextMenu])
 
   useEffect(() => {
     const container = containerRef.current
@@ -192,7 +214,7 @@ export function MindMapTree({
 
     instance.add_event_listener((type, data) => {
       if (type === event_type.select && data.node) {
-        onSelectNodeRef.current(data.node)
+        onSelectNodeRef.current(data.node, getNodePopoverPosition(container, mind.data, data.node))
       }
 
       if (type === event_type.edit) {
@@ -201,7 +223,7 @@ export function MindMapTree({
 
           if (nodeId) {
             window.setTimeout(() => beginInlineEdit(instance, nodeId), 0)
-            onSelectNodeRef.current(nodeId)
+            onSelectNodeRef.current(nodeId, getNodePopoverPosition(container, mind.data, nodeId))
           }
 
           return
@@ -227,11 +249,10 @@ export function MindMapTree({
         return
       }
 
-      const node = findNode(mind.data, nodeId)
-
-      if (node?.childMindMapId) {
-        onOpenChildMindMapRef.current(node)
-      }
+      event.preventDefault()
+      instance.select_node(nodeId)
+      onSelectNodeRef.current(nodeId, getNodePopoverPosition(container, mind.data, nodeId))
+      beginInlineEdit(instance, nodeId)
     }
 
     const handleContextMenu = (event: MouseEvent) => {
@@ -243,7 +264,7 @@ export function MindMapTree({
 
       event.preventDefault()
       instance.select_node(nodeId)
-      onSelectNodeRef.current(nodeId)
+      onSelectNodeRef.current(nodeId, getNodePopoverPosition(container, mind.data, nodeId))
       onNodeContextMenuRef.current(nodeId, { x: event.clientX, y: event.clientY })
     }
 

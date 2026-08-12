@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "dexie": "^4.4.4",
+    "gantt-task-react": "^0.3.9",
     "highlight.js": "^11.11.1",
     "jsmind": "^0.9.1",
     "katex": "^0.18.3",

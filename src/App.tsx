@@ -11,6 +11,7 @@ import {
 import './App.css'
 import { createMindMapDocument, db, ensureRootMindMap, ROOT_MAP_ID, saveMindMap } from './db'
 import { MindMapTree } from './components/MindMapTree'
+import { GanttView } from './components/GanttView'
 import { NodeMemo } from './components/NodeMemo'
 import type { MindMapDocument, MindMapNodeData } from './types'
 import {
@@ -25,6 +26,7 @@ import {
 } from './tree'
 
 type AppTheme = 'system' | 'light' | 'dark'
+type ViewMode = 'mindmap' | 'gantt'
 
 interface AppSettings {
   theme: AppTheme
@@ -54,17 +56,15 @@ const fontOptions = [
   { label: 'System', value: DEFAULT_SETTINGS.fontFamily },
   { label: 'Serif', value: 'Georgia, \'Times New Roman\', serif' },
   { label: 'Sans Serif', value: 'Arial, Helvetica, sans-serif' },
+  { label: 'Noto Sans JP', value: '"Noto Sans JP", system-ui, sans-serif' },
   { label: 'Monospace', value: 'ui-monospace, Consolas, monospace' },
 ]
 
 const nodeColorPalette = [
   { label: 'Blue', value: '#3d98d8' },
-  { label: 'Purple', value: '#7c3aed' },
   { label: 'Green', value: '#16a34a' },
   { label: 'Yellow', value: '#eab308' },
-  { label: 'Orange', value: '#f97316' },
   { label: 'Red', value: '#dc2626' },
-  { label: 'Pink', value: '#db2777' },
   { label: 'Slate', value: '#475569' },
   { label: 'White', value: '#ffffff' },
   { label: 'Black', value: '#111827' },
@@ -95,6 +95,7 @@ function App() {
   const [currentMapId, setCurrentMapId] = useState(ROOT_MAP_ID)
   const [document, setDocument] = useState<MindMapDocument | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>('mindmap')
   const [breadcrumb, setBreadcrumb] = useState<MindMapDocument[]>([])
   const [status, setStatus] = useState('Loading...')
   const [memoFocusRequest, setMemoFocusRequest] = useState(0)
@@ -106,10 +107,12 @@ function App() {
   const [isMemoVisible, setIsMemoVisible] = useState(true)
   const [memoPanelWidth, setMemoPanelWidth] = useState(36)
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
+  const [childMindMapPopover, setChildMindMapPopover] = useState<{ nodeId: string; x: number; y: number; placement: 'bottom' | 'right' } | null>(null)
   const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings())
   const appShellRef = useRef<HTMLElement | null>(null)
   const workspaceRef = useRef<HTMLElement | null>(null)
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
@@ -126,6 +129,7 @@ function App() {
         setUndoStack([])
         setRedoStack([])
         setPendingEditNodeId(null)
+        setViewMode('mindmap')
         setStatus('Saved')
       }
     }
@@ -175,9 +179,38 @@ function App() {
     return findNode(document.data.data, contextMenu.nodeId)
   }, [contextMenu, document])
 
+  const childMindMapPopoverNode = useMemo(() => {
+    if (!document || !childMindMapPopover) {
+      return null
+    }
+
+    const node = findNode(document.data.data, childMindMapPopover.nodeId)
+
+    return node?.childMindMapId ? node : null
+  }, [childMindMapPopover, document])
+
   useEffect(() => {
     window.localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(settings))
   }, [settings])
+
+  useEffect(() => {
+    const menu = contextMenuRef.current
+
+    if (!contextMenu || !menu) {
+      return
+    }
+
+    const margin = 8
+    const rect = menu.getBoundingClientRect()
+    const nextX = Math.min(contextMenu.x, window.innerWidth - rect.width - margin)
+    const nextY = Math.min(contextMenu.y, window.innerHeight - rect.height - margin)
+    const clampedX = Math.max(margin, nextX)
+    const clampedY = Math.max(margin, nextY)
+
+    if (clampedX !== contextMenu.x || clampedY !== contextMenu.y) {
+      setContextMenu({ ...contextMenu, x: clampedX, y: clampedY })
+    }
+  }, [contextMenu])
 
   const appStyle = useMemo(() => ({
     '--app-font': settings.fontFamily,
@@ -346,6 +379,8 @@ function App() {
       return
     }
 
+    setChildMindMapPopover(null)
+
     const childDocument = await db.mindMaps.get(node.childMindMapId)
 
     if (!childDocument) {
@@ -354,6 +389,41 @@ function App() {
     }
 
     setBreadcrumb((items) => [...items, document])
+    setCurrentMapId(childDocument.id)
+  }
+
+  async function handleOpenOrCreateChildMindMap(node = selectedNode) {
+    if (!node || !document) {
+      return
+    }
+
+    if (node.childMindMapId) {
+      await handleOpenChildMindMap(node)
+      return
+    }
+
+    const childMapId = generateId('map')
+    const childDocument = createMindMapDocument(childMapId, node.topic)
+    await db.mindMaps.put(childDocument)
+
+    const updatedDocument: MindMapDocument = {
+      ...document,
+      data: {
+        ...document.data,
+        data: updateNode(document.data.data, node.id, (currentNode) => ({
+          ...currentNode,
+          childMindMapId: childMapId,
+        })),
+      },
+    }
+
+    setUndoStack((items) => [...items, document])
+    setRedoStack([])
+    setDocument(updatedDocument)
+    await saveMindMap(updatedDocument)
+
+    setChildMindMapPopover(null)
+    setBreadcrumb((items) => [...items, updatedDocument])
     setCurrentMapId(childDocument.id)
   }
 
@@ -382,12 +452,32 @@ function App() {
     updateCurrentRoot((root) => updateNode(root, nodeId, (node) => ({ ...node, ...colors })))
   }
 
+  function handleGanttNodeUpdate(nodeId: string, updates: Partial<MindMapNodeData>) {
+    updateCurrentRoot((root) => updateNode(root, nodeId, (node) => ({ ...node, ...updates })))
+  }
+
   function handleResetNodeColors(nodeId: string) {
     updateCurrentRoot((root) => updateNode(root, nodeId, (node) => ({
       ...node,
       'background-color': undefined,
       'foreground-color': undefined,
     })))
+  }
+
+  function handleSelectedNodeBackgroundColorChange(color: string) {
+    if (!selectedNodeId) {
+      return
+    }
+
+    handleNodeColorChange(selectedNodeId, { 'background-color': color })
+  }
+
+  function handleSelectedNodeColorsReset() {
+    if (!selectedNodeId) {
+      return
+    }
+
+    handleResetNodeColors(selectedNodeId)
   }
 
   function handleMemoResizeStart(event: ReactPointerEvent<HTMLDivElement>) {
@@ -423,6 +513,11 @@ function App() {
       childMindMapId: typeof node.childMindMapId === 'string' ? node.childMindMapId : undefined,
       'background-color': typeof node['background-color'] === 'string' ? node['background-color'] : undefined,
       'foreground-color': typeof node['foreground-color'] === 'string' ? node['foreground-color'] : undefined,
+      startDate: typeof node.startDate === 'string' ? node.startDate : undefined,
+      dueDate: typeof node.dueDate === 'string' ? node.dueDate : undefined,
+      assignee: typeof node.assignee === 'string' ? node.assignee : undefined,
+      progress: typeof node.progress === 'number' ? Math.min(100, Math.max(0, node.progress)) : undefined,
+      dependsOn: Array.isArray(node.dependsOn) ? node.dependsOn.filter((id) => typeof id === 'string') : undefined,
       children: node.children?.map(cloneImportedNode) ?? [],
     }
   }
@@ -545,6 +640,23 @@ function App() {
     setContextMenu(null)
   }
 
+  function handleSelectNode(nodeId: string, position?: { x: number; y: number; placement: 'bottom' | 'right' }) {
+    setSelectedNodeId(nodeId)
+
+    if (!document) {
+      setChildMindMapPopover(null)
+      return
+    }
+
+    const node = findNode(document.data.data, nodeId)
+
+    if (node?.childMindMapId && position) {
+      setChildMindMapPopover({ nodeId, ...position })
+    } else {
+      setChildMindMapPopover(null)
+    }
+  }
+
   function runContextMenuAction(action: () => void | Promise<void>) {
     closeContextMenu()
     void action()
@@ -607,7 +719,20 @@ function App() {
       return 'y'
     }
 
+    if (nativeEvent.code.startsWith('Digit') || nativeEvent.code.startsWith('Numpad')) {
+      return nativeEvent.code.replace('Digit', '').replace('Numpad', '')
+    }
+
     return key
+  }
+
+  function consumeShortcutEvent(event: KeyboardEvent | ReactKeyboardEvent<HTMLElement>) {
+    event.preventDefault()
+    event.stopPropagation()
+
+    if ('nativeEvent' in event) {
+      event.nativeEvent.stopImmediatePropagation()
+    }
   }
 
   function handleShortcutKeyDown(event: KeyboardEvent | ReactKeyboardEvent<HTMLElement>) {
@@ -637,6 +762,30 @@ function App() {
       return
     }
 
+    if (withModifier && shortcutKey === '0') {
+      consumeShortcutEvent(event)
+      handleSelectedNodeColorsReset()
+      return
+    }
+
+    if (withModifier && shortcutKey === '1') {
+      consumeShortcutEvent(event)
+      handleSelectedNodeBackgroundColorChange('#dc2626')
+      return
+    }
+
+    if (withModifier && shortcutKey === '2') {
+      consumeShortcutEvent(event)
+      handleSelectedNodeBackgroundColorChange('#eab308')
+      return
+    }
+
+    if (withModifier && shortcutKey === '3') {
+      consumeShortcutEvent(event)
+      handleSelectedNodeBackgroundColorChange('#16a34a')
+      return
+    }
+
     if (withModifier && shortcutKey === 'z' && event.shiftKey) {
       event.preventDefault()
       event.stopPropagation()
@@ -661,7 +810,14 @@ function App() {
     if (shortcutKey === 'enter' && withModifier) {
       event.preventDefault()
       event.stopPropagation()
-      handleOpenChildMindMap()
+      void handleOpenOrCreateChildMindMap()
+      return
+    }
+
+    if (shortcutKey === 'delete' && withModifier) {
+      event.preventDefault()
+      event.stopPropagation()
+      void handleDeleteChildMindMap()
       return
     }
 
@@ -720,6 +876,20 @@ function App() {
           ))}
           <span>{breadcrumb.length > 0 ? `/ ${document.name}` : document.name}</span>
         </nav>
+        <div className="mode-tabs" role="tablist" aria-label="View mode">
+          <button type="button" className={viewMode === 'mindmap' ? 'active' : ''} onClick={() => setViewMode('mindmap')}>MindMap</button>
+          <button
+            type="button"
+            className={viewMode === 'gantt' ? 'active' : ''}
+            onClick={() => {
+              setChildMindMapPopover(null)
+              setContextMenu(null)
+              setViewMode('gantt')
+            }}
+          >
+            Gantt
+          </button>
+        </div>
         <span className="status">{status}</span>
         <button type="button" className="settings-button" onClick={() => setIsSettingsOpen(true)} aria-label="Open settings" title="Settings">
           ⚙
@@ -728,24 +898,35 @@ function App() {
 
       <section
         ref={workspaceRef}
-        className={`workspace${isMemoVisible ? '' : ' memo-hidden'}`}
+        className={`workspace ${viewMode === 'gantt' ? 'gantt-workspace' : 'mindmap-workspace'}${isMemoVisible ? '' : ' memo-hidden'}`}
         style={isMemoVisible ? { gridTemplateColumns: `minmax(0, 1fr) 6px minmax(320px, ${memoPanelWidth}%)` } : undefined}
       >
         <section className="mindmap-panel">
-          <MindMapTree
-            mind={document.data}
-            selectedNodeId={selectedNodeId}
-            focusRequest={mindMapFocusRequest}
-            pendingEditNodeId={pendingEditNodeId}
-            canUndo={undoStack.length > 0}
-            canRedo={redoStack.length > 0}
-            onUndo={handleUndo}
-            onRedo={handleRedo}
-            onMindChange={handleMindMapChange}
-            onSelectNode={setSelectedNodeId}
-            onOpenChildMindMap={handleOpenChildMindMap}
-            onNodeContextMenu={(nodeId, position) => setContextMenu({ nodeId, x: position.x, y: position.y })}
-          />
+          {viewMode === 'mindmap' ? (
+            <MindMapTree
+              mind={document.data}
+              selectedNodeId={selectedNodeId}
+              focusRequest={mindMapFocusRequest}
+              pendingEditNodeId={pendingEditNodeId}
+              canUndo={undoStack.length > 0}
+              canRedo={redoStack.length > 0}
+              onUndo={handleUndo}
+              onRedo={handleRedo}
+              onMindChange={handleMindMapChange}
+              onSelectNode={handleSelectNode}
+              onNodeContextMenu={(nodeId, position) => {
+                setChildMindMapPopover(null)
+                setContextMenu({ nodeId, x: position.x, y: position.y })
+              }}
+            />
+          ) : (
+            <GanttView
+              root={document.data.data}
+              selectedNodeId={selectedNodeId}
+              onSelectNode={setSelectedNodeId}
+              onUpdateNode={handleGanttNodeUpdate}
+            />
+          )}
         </section>
         {isMemoVisible && (
           <>
@@ -778,8 +959,24 @@ function App() {
         </button>
       )}
 
+      {viewMode === 'mindmap' && childMindMapPopover && childMindMapPopoverNode && !contextMenu && (
+        <div
+          className={`child-mindmap-popover ${childMindMapPopover.placement}`}
+          style={{ left: childMindMapPopover.x, top: childMindMapPopover.y }}
+          role="dialog"
+          aria-label={`${childMindMapPopoverNode.topic} child MindMap`}
+          onMouseDown={(event) => event.stopPropagation()}
+          onClick={(event) => event.stopPropagation()}
+        >
+          <button type="button" onClick={() => void handleOpenChildMindMap(childMindMapPopoverNode)}>
+            Open MindMap
+          </button>
+        </div>
+      )}
+
       {contextMenu && contextMenuNode && (
         <div
+          ref={contextMenuRef}
           className="context-menu"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           role="menu"
@@ -787,10 +984,12 @@ function App() {
         >
           <p className="context-menu-title">{contextMenuNode.topic}</p>
           <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleAddSiblingNode(contextMenuNode.id))}>
-            + Sibling Node
+            <span>+ Sibling Node</span>
+            <kbd>Enter</kbd>
           </button>
           <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleAddChildNode(contextMenuNode.id))}>
-            + Child Node
+            <span>+ Child Node</span>
+            <kbd>Tab</kbd>
           </button>
           <button
             type="button"
@@ -798,7 +997,8 @@ function App() {
             onClick={() => runContextMenuAction(() => handleDeleteNode(contextMenuNode))}
             disabled={contextMenuNode.id === document.data.data.id}
           >
-            Delete
+            <span>Delete</span>
+            <kbd>Del</kbd>
           </button>
           <div className="context-menu-color-group" role="group" aria-label="Node colors" onClick={(event) => event.stopPropagation()}>
             <div className="context-menu-color-row">
@@ -834,21 +1034,25 @@ function App() {
               </div>
             </div>
             <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleResetNodeColors(contextMenuNode.id))}>
-              Reset colors
+              <span>Reset colors</span>
+              <kbd>Ctrl+0</kbd>
             </button>
           </div>
           {contextMenuNode.childMindMapId ? (
             <>
               <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleOpenChildMindMap(contextMenuNode))}>
-                Open MindMap
+                <span>Open MindMap</span>
+                <kbd>Ctrl+Enter</kbd>
               </button>
               <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleDeleteChildMindMap(contextMenuNode))}>
-                Delete Child MindMap
+                <span>Delete MindMap</span>
+                <kbd>Ctrl+Delete</kbd>
               </button>
             </>
           ) : (
             <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleCreateChildMindMap(contextMenuNode))}>
-              Create MindMap
+              <span>Create MindMap</span>
+              <kbd>Ctrl+Enter</kbd>
             </button>
           )}
           <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleExportJson(contextMenuNode))}>

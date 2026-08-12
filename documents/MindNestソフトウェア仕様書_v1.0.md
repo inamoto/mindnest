@@ -494,13 +494,19 @@ Backend ↗
 
 というNodeを選択すると右側にMarkdown Memoが表示される。
 
-Double Clickすると、
+Child MindMapを持つNodeを選択した場合は、Node付近に `Open MindMap` ポップアップを表示する。ポップアップの表示位置は以下とする。
 
 ```text
-Backend
+子Nodeを持たない葉Node
+  Nodeの右側
+
+子Nodeを持つNode
+  Nodeの下側
 ```
 
-へ移動する。
+`Open MindMap` を押すと、該当Nodeに紐づくChild MindMapへ移動する。
+
+Double ClickはChild MindMapへの移動には使用せず、NodeのRenameに割り当てる。
 
 Child MindMap作成時のMindMap名は、選択Nodeの `topic` をそのまま使用する。名前に `Child MindMap` などの接尾辞は付与しない。
 
@@ -510,10 +516,16 @@ Child MindMap作成時のMindMap名は、選択Nodeの `topic` をそのまま�
 Single Click
     ↓
 Memo表示
+    ↓
+Child MindMapが存在する場合はOpen MindMapポップアップ表示
+
+Open MindMap
+    ↓
+Child MindMapを開く
 
 Double Click
     ↓
-Child MindMapを開く
+Node名をRename
 ```
 
 という操作体系とする。
@@ -541,7 +553,7 @@ Add Child Node
 Rename
 Edit Memo
 Open MindMap
-Delete Child MindMap
+Delete MindMap
 Delete
 ```
 
@@ -550,6 +562,22 @@ Delete
 `Add Sibling Node` は選択Nodeの直後に兄弟Nodeを追加する。Root Node選択時はRootの兄弟を作れないため、Root配下のChild Node追加として扱う。
 
 `Add Child Node` は選択Nodeの子としてNodeを追加する。
+
+右クリックメニューは表示後にサイズを測定し、画面下端・右端からはみ出す場合はビューポート内に収まる位置へ自動補正する。
+
+右クリックメニューでは、主要操作の右側にキーボードショートカットを表示する。
+
+```text
++ Sibling Node      Enter
++ Child Node        Tab
+Delete              Del
+Reset colors        Ctrl+0
+Open MindMap        Ctrl+Enter
+Create MindMap      Ctrl+Enter
+Delete MindMap      Ctrl+Delete
+```
+
+ただし `Ctrl + 1`、`Ctrl + 2`、`Ctrl + 3` の背景色変更ショートカットは右クリックメニューには表示しない。
 
 ---
 
@@ -762,7 +790,23 @@ Insert / Tab
     選択NodeのChild Nodeを追加
 
 Ctrl + Enter
-    Child MindMapを開く
+    Child MindMapが存在する場合は開く
+    存在しない場合は作成し、そのまま作成したChild MindMapへ入る
+
+Ctrl + Delete
+    選択Nodeに紐づくChild MindMapを削除する
+
+Ctrl + 0
+    選択Nodeの背景色・文字色をリセットする
+
+Ctrl + 1
+    選択Nodeの背景色をRedにする
+
+Ctrl + 2
+    選択Nodeの背景色をYellowにする
+
+Ctrl + 3
+    選択Nodeの背景色をGreenにする
 
 Ctrl + M
     MindMapとMemo Editor間でフォーカスを切り替える
@@ -905,7 +949,7 @@ Theme
   System / Light / Dark
 
 Font
-  System / Serif / Sans Serif / Monospace
+  System / Serif / Sans Serif / Noto Sans JP / Monospace
 
 MindMap font size
   8px - 24px
@@ -924,6 +968,8 @@ hierarchicalMindMap.settings
 
 Reset操作により初期値へ戻せる。
 
+`Noto Sans JP` はGoogle Fontsから読み込む。ネットワークが利用できない場合はブラウザのフォールバックフォントを使用する。
+
 ---
 
 # 26. ノード色設定
@@ -934,12 +980,9 @@ Reset操作により初期値へ戻せる。
 
 ```text
 Blue
-Purple
 Green
 Yellow
-Orange
 Red
-Pink
 Slate
 White
 Black
@@ -953,6 +996,11 @@ Black
 ・文字色は背景色とは独立して設定できる
 ・背景色を変更してもエッジ色は変更しない
 ・Reset colorsでノード個別の背景色・文字色を解除する
+・Ctrl + 0でノード個別の背景色・文字色を解除する
+・Ctrl + 1で背景色をRedにする
+・Ctrl + 2で背景色をYellowにする
+・Ctrl + 3で背景色をGreenにする
+・Ctrl + 1〜3は右クリックメニューには表示しない
 ・ノード色はIndexedDB上のMindMap Nodeデータに保存する
 ・JSON Export/Importにノード色を含める
 ```
@@ -977,7 +1025,23 @@ Arrow keys
   Node間を移動
 
 Ctrl + Enter
-  Child MindMapを開く
+  Child MindMapが存在する場合は開く
+  存在しない場合は作成し、そのまま作成したChild MindMapへ入る
+
+Ctrl + Delete
+  選択Nodeに紐づくChild MindMapを削除する
+
+Ctrl + 0
+  選択Nodeの背景色・文字色をリセットする
+
+Ctrl + 1
+  選択Nodeの背景色をRedにする
+
+Ctrl + 2
+  選択Nodeの背景色をYellowにする
+
+Ctrl + 3
+  選択Nodeの背景色をGreenにする
 
 Ctrl + M
   Memo Editorへフォーカス
@@ -1023,7 +1087,7 @@ OK
 
 コンテキストメニュー経由とDeleteキー経由のどちらでも同じ確認を行う。
 
-Child MindMapのみを削除する操作は、Node削除とは別の確認フローを持つ。
+Child MindMapのみを削除する操作は、Node削除とは別の確認フローを持つ。右クリックメニューの `Delete MindMap` または `Ctrl + Delete` から実行できる。
 
 ---
 
@@ -1065,6 +1129,8 @@ Version 1.0では最低限以下を自動テストで保証する。
 ・設定変更が画面へ反映される
 ・設定変更がリロード後も保持される
 ・ノード背景色/文字色が右クリックメニューから変更できる
+・Ctrl + 0〜3でノード色を変更・リセットできる
+・Ctrl + 0〜3でMemo EditorやNode Renameに入らない
 ・ノード背景色/文字色がリロード後も保持される
 ・背景色と枠線色が一致する
 ・背景色変更でエッジ色が変化しない
@@ -1072,6 +1138,10 @@ Version 1.0では最低限以下を自動テストで保証する。
 ・Memo Editor内のキー操作がMindMap構造を変更しない
 ・Child MindMap付きNode削除時に確認ダイアログを表示する
 ・Deleteキー経由でも同じ確認ダイアログを表示する
+・Ctrl + DeleteでChild MindMapのみを削除できる
+・Child MindMapを持つNode選択時にOpen MindMapポップアップから遷移できる
+・Ctrl + EnterでChild MindMapを作成した場合、そのままChild MindMapへ入り、戻った後もNodeとの紐づきが保持される
+・Double ClickでNode Renameに入る
 ・Export JSONにMemo、Child MindMap参照、Node色が含まれる
 ```
 
