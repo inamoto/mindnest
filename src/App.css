@@ -1,5 +1,7 @@
 .app-shell {
+  height: 100svh;
   min-height: 100svh;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
   background: var(--bg);
@@ -235,7 +237,7 @@
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 6px minmax(320px, 36%);
+  grid-template-columns: minmax(0, 1fr) 6px minmax(320px, var(--memo-panel-width, 36%));
 }
 
 .workspace.memo-hidden {
@@ -1019,9 +1021,14 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
-  .workspace,
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
   .workspace.memo-hidden {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
   }
 
   .memo-resizer {
@@ -1029,8 +1036,19 @@ button:disabled {
   }
 
   .mindmap-panel {
+    grid-row: 1;
     border-right: 0;
     border-bottom: 1px solid var(--border);
-    max-height: 50svh;
+    max-height: none;
+  }
+
+  .memo-panel {
+    grid-row: 2;
+    min-width: 0;
+    width: 100%;
+  }
+
+  .mindmap-canvas {
+    min-height: 0;
   }
 }

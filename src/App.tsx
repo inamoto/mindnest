@@ -899,7 +899,7 @@ function App() {
       <section
         ref={workspaceRef}
         className={`workspace ${viewMode === 'gantt' ? 'gantt-workspace' : 'mindmap-workspace'}${isMemoVisible ? '' : ' memo-hidden'}`}
-        style={isMemoVisible ? { gridTemplateColumns: `minmax(0, 1fr) 6px minmax(320px, ${memoPanelWidth}%)` } : undefined}
+        style={isMemoVisible ? { '--memo-panel-width': `${memoPanelWidth}%` } as CSSProperties : undefined}
       >
         <section className="mindmap-panel">
           {viewMode === 'mindmap' ? (

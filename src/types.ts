@@ -10,6 +10,7 @@ export interface MindMapNodeData {
   assignee?: string
   progress?: number
   dependsOn?: string[]
+  expanded?: boolean
   children?: MindMapNodeData[]
 }
 

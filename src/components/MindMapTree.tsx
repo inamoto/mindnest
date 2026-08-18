@@ -1,8 +1,43 @@
 import { useEffect, useRef, useState } from 'react'
 import jsMind, { event_type } from 'jsmind'
-import 'jsmind/draggable-node'
+import { DraggableNode } from 'jsmind/draggable-node'
 import 'jsmind/style/jsmind.css'
 import type { JsMindData, MindMapNodeData } from '../types'
+
+type DraggableNodeInstance = InstanceType<typeof DraggableNode>
+
+const draggableNodeInstances = new WeakMap<jsMind, DraggableNodeInstance>()
+const originalDraggableNodeInit = DraggableNode.prototype.init
+
+DraggableNode.prototype.init = function patchedInit() {
+  draggableNodeInstances.set(this.jm, this)
+  originalDraggableNodeInit.call(this)
+}
+
+function cancelDraggableNode(dragger: DraggableNodeInstance) {
+  if (dragger.hlookup_delay) {
+    window.clearTimeout(dragger.hlookup_delay)
+    dragger.hlookup_delay = 0
+  }
+
+  if (dragger.hlookup_timer) {
+    window.clearInterval(dragger.hlookup_timer)
+    dragger.hlookup_timer = 0
+  }
+
+  dragger.clear_lines()
+  dragger.hide_shadow()
+  dragger.active_node = null
+  dragger.target_node = null
+  dragger.target_direct = null
+  dragger.view_panel_rect = null
+  dragger.moved = false
+  dragger.capture = false
+
+  if (dragger.view_draggable) {
+    dragger.jm.enable_view_draggable()
+  }
+}
 
 interface MindMapTreeProps {
   mind: JsMindData
@@ -40,6 +75,26 @@ function getNodeIdFromEventTarget(target: EventTarget | null) {
   }
 
   return target.closest('jmnode')?.getAttribute('nodeid') ?? null
+}
+
+function collectExpandedState(node: MindMapNodeData, state = new Map<string, boolean>()) {
+  state.set(node.id, node.expanded !== false)
+
+  for (const child of node.children ?? []) {
+    collectExpandedState(child, state)
+  }
+
+  return state
+}
+
+function applyExpandedState(node: MindMapNodeData, state: Map<string, boolean>): MindMapNodeData {
+  const expanded = state.get(node.id)
+
+  return {
+    ...node,
+    ...(expanded === undefined ? {} : { expanded }),
+    children: node.children?.map((child) => applyExpandedState(child, state)),
+  }
 }
 
 function shouldFocusMindMap(container: HTMLElement) {
@@ -83,6 +138,13 @@ type ZoomableJsMind = jsMind & {
   }
 }
 
+type JsMindWithInternalView = jsMind & {
+  view: jsMind['view'] & {
+    container?: HTMLElement
+    e_panel?: HTMLElement
+  }
+}
+
 function getZoomPercent(instance: jsMind) {
   return Math.round(((instance as ZoomableJsMind).view.zoom_current ?? 1) * 100)
 }
@@ -117,8 +179,11 @@ export function MindMapTree({
   onSelectNode,
   onNodeContextMenu,
 }: MindMapTreeProps) {
+  const canvasRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const jsMindRef = useRef<jsMind | null>(null)
+  const scrollPositionRef = useRef<{ left: number; top: number } | null>(null)
+  const expandedStateRef = useRef<Map<string, boolean> | null>(null)
   const onSelectNodeRef = useRef(onSelectNode)
   const onMindChangeRef = useRef(onMindChange)
   const onNodeContextMenuRef = useRef(onNodeContextMenu)
@@ -131,9 +196,10 @@ export function MindMapTree({
   }, [onMindChange, onSelectNode, onNodeContextMenu])
 
   useEffect(() => {
+    const canvas = canvasRef.current
     const container = containerRef.current
 
-    if (!container) {
+    if (!canvas || !container) {
       return
     }
 
@@ -203,7 +269,27 @@ export function MindMapTree({
       },
     })
 
-    instance.show(mind)
+    const mindWithPreservedExpandedState = expandedStateRef.current
+      ? {
+        ...mind,
+        data: applyExpandedState(mind.data, expandedStateRef.current),
+      }
+      : mind
+
+    instance.show(mindWithPreservedExpandedState, true)
+
+    const savedScrollPosition = scrollPositionRef.current
+    const panel = (instance as JsMindWithInternalView).view.e_panel
+
+    if (savedScrollPosition && panel) {
+      panel.scrollLeft = savedScrollPosition.left
+      panel.scrollTop = savedScrollPosition.top
+      window.requestAnimationFrame(() => {
+        panel.scrollLeft = savedScrollPosition.left
+        panel.scrollTop = savedScrollPosition.top
+      })
+    }
+
     setZoomPercent(getZoomPercent(instance))
 
     window.setTimeout(() => {
@@ -238,8 +324,121 @@ export function MindMapTree({
       container.querySelector<HTMLElement>('.jsmind-inner')?.focus()
     }
 
-    const handleMouseDown = () => {
+    let isPointerDownInMindMap = false
+    let isDraggingNode = false
+    let dragStartMind: JsMindData | null = null
+    let dragStartSelectedNodeId: string | undefined
+
+    const stopViewDrag = (event?: MouseEvent) => {
+      isPointerDownInMindMap = false
+      const mouseUpEvent = new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        clientX: event?.clientX ?? 0,
+        clientY: event?.clientY ?? 0,
+        screenX: event?.screenX ?? 0,
+        screenY: event?.screenY ?? 0,
+      })
+      const internalView = (instance as JsMindWithInternalView).view
+      const mouseUpTargets = [container, internalView.container, internalView.e_panel].filter(
+        (target): target is HTMLElement => target instanceof HTMLElement,
+      )
+
+      for (const target of mouseUpTargets) {
+        target.dispatchEvent(new MouseEvent('mouseup', mouseUpEvent))
+      }
+
+      window.document.dispatchEvent(new MouseEvent('mouseup', mouseUpEvent))
+      window.dispatchEvent(new MouseEvent('mouseup', mouseUpEvent))
+      instance.enable_view_draggable()
+    }
+
+    const cancelActiveDrag = (event?: MouseEvent) => {
+      const dragger = draggableNodeInstances.get(instance)
+      const isNodeDragActive = isDraggingNode || Boolean(dragger?.capture)
+      const mindBeforeCancel = dragStartMind
+      const selectedNodeIdBeforeCancel = dragStartSelectedNodeId
+
+      if (!isNodeDragActive && !isPointerDownInMindMap) {
+        return
+      }
+
+      isDraggingNode = false
+      dragStartMind = null
+      dragStartSelectedNodeId = undefined
+
+      stopViewDrag(event)
+
+      if (dragger?.capture || isNodeDragActive) {
+        cancelDraggableNode(dragger)
+      }
+
+      if (mindBeforeCancel) {
+        instance.show(mindBeforeCancel, true)
+        onMindChangeRef.current(mindBeforeCancel, selectedNodeIdBeforeCancel)
+      }
+    }
+
+    const isInsideMindMapArea = (event: MouseEvent) => {
+      const rect = canvas.getBoundingClientRect()
+
+      return event.clientX >= rect.left && event.clientX <= rect.right && event.clientY >= rect.top && event.clientY <= rect.bottom
+    }
+
+    const handleMouseDown = (event: MouseEvent) => {
       focusMindMap()
+      isPointerDownInMindMap = event.button === 0
+      const nodeId = getNodeIdFromEventTarget(event.target)
+      const node = nodeId ? instance.get_node(nodeId) : null
+      isDraggingNode = Boolean(node && !node.isroot)
+      dragStartMind = isDraggingNode ? instance.get_data('node_tree') as JsMindData : null
+      dragStartSelectedNodeId = isDraggingNode ? nodeId ?? undefined : undefined
+    }
+
+    const handleMouseLeave = (event: MouseEvent) => {
+      cancelActiveDrag(event)
+    }
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const dragger = draggableNodeInstances.get(instance)
+
+      if (!isInsideMindMapArea(event)) {
+        if (isDraggingNode || dragger?.capture) {
+          cancelActiveDrag(event)
+        } else if (isPointerDownInMindMap) {
+          stopViewDrag(event)
+        }
+      }
+    }
+
+    const handleMouseUp = (event: MouseEvent) => {
+      const dragger = draggableNodeInstances.get(instance)
+
+      if (!isInsideMindMapArea(event)) {
+        if (isDraggingNode || dragger?.capture) {
+          cancelActiveDrag(event)
+          return
+        }
+
+        if (isPointerDownInMindMap) {
+          stopViewDrag(event)
+        }
+      }
+
+      isPointerDownInMindMap = false
+      isDraggingNode = false
+      dragStartMind = null
+      dragStartSelectedNodeId = undefined
+    }
+
+    const handleWindowMouseOut = (event: MouseEvent) => {
+      if (!event.relatedTarget) {
+        cancelActiveDrag(event)
+      }
+    }
+
+    const handleWindowBlur = () => {
+      cancelActiveDrag()
     }
 
     const handleDoubleClick = (event: MouseEvent) => {
@@ -268,14 +467,37 @@ export function MindMapTree({
       onNodeContextMenuRef.current(nodeId, { x: event.clientX, y: event.clientY })
     }
 
-    container.addEventListener('mousedown', handleMouseDown)
+    container.addEventListener('mousedown', handleMouseDown, true)
+    canvas.addEventListener('mouseleave', handleMouseLeave)
+    window.document.addEventListener('mousemove', handleMouseMove, true)
+    window.document.addEventListener('mouseup', handleMouseUp, true)
+    window.document.addEventListener('mouseout', handleWindowMouseOut, true)
+    window.addEventListener('mouseup', handleMouseUp, true)
+    window.addEventListener('blur', handleWindowBlur)
     container.addEventListener('dblclick', handleDoubleClick)
     container.addEventListener('contextmenu', handleContextMenu)
 
     return () => {
-      container.removeEventListener('mousedown', handleMouseDown)
+      container.removeEventListener('mousedown', handleMouseDown, true)
+      canvas.removeEventListener('mouseleave', handleMouseLeave)
+      window.document.removeEventListener('mousemove', handleMouseMove, true)
+      window.document.removeEventListener('mouseup', handleMouseUp, true)
+      window.document.removeEventListener('mouseout', handleWindowMouseOut, true)
+      window.removeEventListener('mouseup', handleMouseUp, true)
+      window.removeEventListener('blur', handleWindowBlur)
       container.removeEventListener('dblclick', handleDoubleClick)
       container.removeEventListener('contextmenu', handleContextMenu)
+      expandedStateRef.current = collectExpandedState((instance.get_data('node_tree') as JsMindData).data)
+
+      const panel = (instance as JsMindWithInternalView).view.e_panel
+
+      if (panel) {
+        scrollPositionRef.current = {
+          left: panel.scrollLeft,
+          top: panel.scrollTop,
+        }
+      }
+
       instance.clear_event_listener()
       container.innerHTML = ''
       jsMindRef.current = null
@@ -352,7 +574,7 @@ export function MindMapTree({
   }
 
   return (
-    <div className="mindmap-canvas">
+    <div ref={canvasRef} className="mindmap-canvas">
       <div ref={containerRef} className="mindmap-canvas-stage" aria-label="MindMap" />
       <div className="canvas-controls" onMouseDown={(event) => event.stopPropagation()} onClick={(event) => event.stopPropagation()}>
         <div className="history-controls" aria-label="History controls">
