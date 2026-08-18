@@ -51,6 +51,17 @@ export function addChildNode(root: MindMapNodeData, parentId: string, newNode = 
   }))
 }
 
+export function cloneNodeWithNewIds(node: MindMapNodeData): MindMapNodeData {
+  const { childMindMapId: _childMindMapId, dependsOn: _dependsOn, children, ...copyableNode } = node
+
+  return {
+    ...copyableNode,
+    id: generateId('node'),
+    topic: `${node.topic} Copy`,
+    children: children?.map(cloneNodeWithNewIds) ?? [],
+  }
+}
+
 export function addSiblingNode(root: MindMapNodeData, nodeId: string, newNode = createNode()): MindMapNodeData {
   if (root.id === nodeId) {
     return addChildNode(root, nodeId, newNode)
@@ -74,6 +85,17 @@ export function deleteNode(root: MindMapNodeData, nodeId: string): MindMapNodeDa
     children: root.children
       ?.filter((child) => child.id !== nodeId)
       .map((child) => deleteNode(child, nodeId)) ?? [],
+  }
+}
+
+export function replaceNode(root: MindMapNodeData, nodeId: string, replacementNode: MindMapNodeData): MindMapNodeData {
+  if (root.id === nodeId) {
+    return replacementNode
+  }
+
+  return {
+    ...root,
+    children: root.children?.map((child) => replaceNode(child, nodeId, replacementNode)) ?? [],
   }
 }
 

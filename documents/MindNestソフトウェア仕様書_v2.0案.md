@@ -545,6 +545,18 @@ dependsOn
 
 Export bundleに含まれるNodeデータをそのまま復元できること。
 
+Import時は選択中Nodeを置き換えるか確認する。
+
+```text
+Yes / OK
+  選択中NodeをImportしたNodeで置き換える。
+
+No / Cancel
+  ImportしたNodeを選択中Nodeの子として追加する。
+```
+
+ImportしたNodeは新しいNode IDを採番して取り込む。
+
 Import時に依存先Node IDが存在しない場合は、その依存関係を破棄するか警告する。
 
 Version 2.0 MVPでは以下とする。
@@ -558,7 +570,25 @@ Version 2.0 MVPでは以下とする。
 
 ## 12. MindMap Mode 関連の更新仕様
 
-### 12.1 Child MindMapポップアップ
+### 12.1 ノードのコピー / ペースト
+
+MindMap ModeではNodeのコピーとペーストをサポートする。
+
+```text
+Ctrl / Cmd + C
+  選択中Nodeとその子孫Nodeをコピーする。
+
+Ctrl / Cmd + V
+  コピー中Nodeを選択中Nodeの子として貼り付ける。
+```
+
+右クリックメニューにも `Copy Node` と `Paste as Child` を表示する。
+
+貼り付け時はコピー元とIDが衝突しないよう、貼り付けるNodeおよび子孫NodeのIDを再採番する。
+
+Child MindMap参照および依存関係はコピー先で共有・不整合が起きやすいため、貼り付け時には引き継がない。
+
+### 12.2 Child MindMapポップアップ
 
 Child MindMapを持つNodeを選択した場合、`Open MindMap` ポップアップを表示する。
 
@@ -574,13 +604,13 @@ Parent Node
 
 Gantt Modeへ切り替えた場合、このポップアップは閉じる。
 
-### 12.2 ダブルクリック
+### 12.3 ダブルクリック
 
 Nodeのダブルクリックはリネームに割り当てる。
 
 Child MindMapへ入る操作には使用しない。
 
-### 12.3 Child MindMapショートカット
+### 12.4 Child MindMapショートカット
 
 ```text
 Ctrl + Enter
@@ -593,7 +623,7 @@ Ctrl + Delete
 
 Ctrl+EnterでChild MindMapを作成した場合、親Nodeと作成されたMindMapの紐付けを保存してから遷移する。
 
-### 12.4 ノード色
+### 12.5 ノード色
 
 ノード色は右クリックメニューから設定できる。
 
@@ -622,13 +652,13 @@ Ctrl + 3: 背景を緑
 
 `Ctrl+1〜3` は右クリックメニューには表示しない。
 
-### 12.5 右クリックメニュー
+### 12.6 右クリックメニュー
 
 右クリックメニューには主要操作のキーボードショートカットを右側に表示する。
 
 メニューが画面外にはみ出さないよう、表示位置をビューポート内に補正する。
 
-### 12.6 ドラッグ操作
+### 12.7 ドラッグ操作
 
 MindMap ModeではNodeのドラッグ移動とキャンバスのパン操作をサポートする。
 
@@ -644,7 +674,7 @@ MindMap ModeではNodeのドラッグ移動とキャンバスのパン操作を�
 
 NodeドラッグをMindMap領域外でキャンセルした場合、Node移動は確定せず、ドラッグ開始前の構造を維持する。
 
-### 12.7 メモ編集中のMindMap状態維持
+### 12.8 メモ編集中のMindMap状態維持
 
 メモ編集によりNodeデータが更新されても、MindMapの表示位置およびNodeの開閉状態は維持する。
 
@@ -654,7 +684,7 @@ NodeドラッグをMindMap領域外でキャンセルした場合、Node移動�
 ・メモ入力キーがMindMapのショートカットや表示移動を発生させない
 ```
 
-### 12.8 Workspace表示モードとレスポンシブレイアウト
+### 12.9 Workspace表示モードとレスポンシブレイアウト
 
 Workspaceには以下の表示モードを設ける。
 

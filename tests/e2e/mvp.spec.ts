@@ -396,6 +396,94 @@ test('exports memo child MindMap reference and node colors', async ({ page }) =>
   expect(json.maps.length).toBeGreaterThan(0)
 })
 
+test('copies and pastes a node subtree as a child', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'CopySource')
+  await page.locator('jmnode', { hasText: /^CopySource$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'CopySourceChild')
+
+  await page.locator('jmnode', { hasText: /^CopySource$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Copy Node' }).click()
+  await page.locator('jmnode', { hasText: /^MindNest$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Paste as Child' }).click()
+
+  await expect(page.locator('jmnode:visible', { hasText: 'CopySource Copy' })).toBeVisible()
+  await expect(page.locator('jmnode:visible', { hasText: 'CopySourceChild Copy' })).toBeVisible()
+})
+
+test('imports JSON as child when replace confirmation is dismissed', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'ImportTarget')
+
+  const fileChooserPromise = page.waitForEvent('filechooser')
+  await page.locator('jmnode', { hasText: /^ImportTarget$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Import JSON' }).click()
+  const fileChooser = await fileChooserPromise
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('Replace "ImportTarget"')
+    await dialog.dismiss()
+  })
+
+  await fileChooser.setFiles({
+    name: 'imported.bundle.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      type: 'mindmap-bundle',
+      version: 1,
+      exportedAt: Date.now(),
+      rootNode: { id: 'imported-root', topic: 'ImportedAsChild', memo: '', children: [] },
+      maps: [],
+    })),
+  })
+
+  await expect(page.locator('jmnode:visible', { hasText: 'ImportTarget' })).toBeVisible()
+  await expect(page.locator('jmnode:visible', { hasText: 'ImportedAsChild' })).toBeVisible()
+})
+
+test('replaces selected node when JSON import confirmation is accepted', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'ReplaceTarget')
+
+  const fileChooserPromise = page.waitForEvent('filechooser')
+  await page.locator('jmnode', { hasText: /^ReplaceTarget$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Import JSON' }).click()
+  const fileChooser = await fileChooserPromise
+
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('Replace "ReplaceTarget"')
+    await dialog.accept()
+  })
+
+  await fileChooser.setFiles({
+    name: 'replacement.bundle.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({
+      type: 'mindmap-bundle',
+      version: 1,
+      exportedAt: Date.now(),
+      rootNode: { id: 'replacement-root', topic: 'ImportedReplacement', memo: '', children: [] },
+      maps: [],
+    })),
+  })
+
+  await expect(page.locator('jmnode:visible', { hasText: 'ReplaceTarget' })).toBeHidden()
+  await expect(page.locator('jmnode:visible', { hasText: 'ImportedReplacement' })).toBeVisible()
+})
+
 test('confirms before deleting a node with child MindMap', async ({ page }) => {
   await resetAppStorage(page)
   await page.reload()

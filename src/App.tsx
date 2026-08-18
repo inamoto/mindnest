@@ -17,11 +17,13 @@ import type { MindMapDocument, MindMapNodeData } from './types'
 import {
   addChildNode,
   addSiblingNode,
+  cloneNodeWithNewIds,
   collectChildMindMapIds,
   createNode,
   deleteNode,
   findNode,
   generateId,
+  replaceNode,
   updateNode,
 } from './tree'
 
@@ -116,6 +118,7 @@ function App() {
   const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
   const [undoStack, setUndoStack] = useState<MindMapDocument[]>([])
   const [redoStack, setRedoStack] = useState<MindMapDocument[]>([])
+  const [copiedNode, setCopiedNode] = useState<MindMapNodeData | null>(null)
   const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => loadWorkspaceLayout())
   const [memoPanelWidth, setMemoPanelWidth] = useState(36)
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
@@ -326,6 +329,27 @@ function App() {
     updateCurrentRoot((root) => addSiblingNode(root, nodeId, newNode))
     setSelectedNodeId(newNode.id)
     setPendingEditNodeId(newNode.id)
+  }
+
+  function handleCopyNode(node = selectedNode) {
+    if (!node) {
+      return
+    }
+
+    setCopiedNode(structuredClone(node))
+    setStatus(`Copied "${node.topic}"`)
+  }
+
+  function handlePasteNode(parentId = selectedNodeId) {
+    if (!copiedNode || !parentId) {
+      return
+    }
+
+    const pastedNode = cloneNodeWithNewIds(copiedNode)
+    updateCurrentRoot((root) => addChildNode(root, parentId, pastedNode))
+    setSelectedNodeId(pastedNode.id)
+    setPendingEditNodeId(null)
+    setStatus(`Pasted "${pastedNode.topic}"`)
   }
 
   function handleMindMapChange(nextData: MindMapDocument['data'], nextSelectedNodeId?: string) {
@@ -612,8 +636,8 @@ function App() {
     URL.revokeObjectURL(url)
   }
 
-  async function handleImportJsonFile(file: File, parentNodeId = selectedNodeId) {
-    if (!parentNodeId) {
+  async function handleImportJsonFile(file: File, targetNodeId = selectedNodeId) {
+    if (!document || !targetNodeId) {
       return
     }
 
@@ -638,8 +662,16 @@ function App() {
         await db.mindMaps.bulkPut(json.maps)
       }
 
+      const targetNode = findNode(document.data.data, targetNodeId)
+      const shouldReplaceTarget = targetNode
+        ? window.confirm(`Replace "${targetNode.topic}" with imported "${json.rootNode.topic}"?\n\nOK: Replace selected node\nCancel: Add as child`)
+        : false
       const importedNode = cloneImportedNode(json.rootNode)
-      updateCurrentRoot((root) => addChildNode(root, parentNodeId, importedNode))
+
+      updateCurrentRoot((root) => shouldReplaceTarget
+        ? replaceNode(root, targetNodeId, importedNode)
+        : addChildNode(root, targetNodeId, importedNode),
+      )
       setSelectedNodeId(importedNode.id)
     } catch {
       window.alert('Failed to import JSON.')
@@ -786,6 +818,18 @@ function App() {
     }
 
     if (editingText) {
+      return
+    }
+
+    if (withModifier && shortcutKey === 'c') {
+      consumeShortcutEvent(event)
+      handleCopyNode()
+      return
+    }
+
+    if (withModifier && shortcutKey === 'v') {
+      consumeShortcutEvent(event)
+      handlePasteNode()
       return
     }
 
@@ -1024,6 +1068,14 @@ function App() {
           <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleAddChildNode(contextMenuNode.id))}>
             <span>+ Child Node</span>
             <kbd>Tab</kbd>
+          </button>
+          <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleCopyNode(contextMenuNode))}>
+            <span>Copy Node</span>
+            <kbd>Ctrl+C</kbd>
+          </button>
+          <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handlePasteNode(contextMenuNode.id))} disabled={!copiedNode}>
+            <span>Paste as Child</span>
+            <kbd>Ctrl+V</kbd>
           </button>
           <button
             type="button"
