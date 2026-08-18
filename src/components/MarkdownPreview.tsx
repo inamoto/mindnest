@@ -1,4 +1,4 @@
-import ReactMarkdown from 'react-markdown'
+import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
@@ -16,13 +16,21 @@ function normalizeDisplayMath(value: string) {
   return value.replace(/(^|\n)\$\$([^\n$][^\n]*?)\$\$(?=\n|$)/g, (_match, prefix: string, math: string) => `${prefix}$$\n${math.trim()}\n$$`)
 }
 
+const markdownComponents: Components = {
+  a: ({ children, ...props }) => (
+    <a {...props} target="_blank" rel="noreferrer">
+      {children}
+    </a>
+  ),
+}
+
 export function MarkdownPreview({ value, onDoubleClick }: MarkdownPreviewProps) {
   const normalizedValue = normalizeDisplayMath(value)
 
   return (
     <div className="markdown-preview" onDoubleClick={onDoubleClick}>
       {value.trim() ? (
-        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex, rehypeSelectedHighlight]}>{normalizedValue}</ReactMarkdown>
+        <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex, rehypeSelectedHighlight]} components={markdownComponents}>{normalizedValue}</ReactMarkdown>
       ) : (
         <p className="empty-preview">No memo yet.</p>
       )}

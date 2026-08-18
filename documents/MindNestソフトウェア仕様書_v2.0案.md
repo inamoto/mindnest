@@ -99,6 +99,9 @@ interface MindMapNodeData {
   progress?: number;
   dependsOn?: string[];
 
+  /** MindMap上の開閉状態。falseの場合は子孫を折りたたむ。 */
+  expanded?: boolean;
+
   children?: MindMapNodeData[];
 }
 ```
@@ -120,6 +123,10 @@ progress
 
 dependsOn
   このタスクが依存する先行タスクNode IDの配列。
+
+expanded
+  MindMap ModeでのNode開閉状態。未設定またはtrueの場合は展開、falseの場合は折りたたみとして扱う。
+  メモ編集などNode内容のみを更新する操作では、現在の開閉状態を維持する。
 ```
 
 ---
@@ -620,6 +627,43 @@ Ctrl + 3: 背景を緑
 右クリックメニューには主要操作のキーボードショートカットを右側に表示する。
 
 メニューが画面外にはみ出さないよう、表示位置をビューポート内に補正する。
+
+### 12.6 ドラッグ操作
+
+MindMap ModeではNodeのドラッグ移動とキャンバスのパン操作をサポートする。
+
+ドラッグ中にMindMap領域外へ出た場合、ドラッグ状態を解除する。
+
+解除対象：
+
+```text
+・メモ領域などアプリ内のMindMap外領域へ移動した場合
+・ブラウザウィンドウ外へ移動した場合
+・ウィンドウのフォーカスが外れた場合
+```
+
+NodeドラッグをMindMap領域外でキャンセルした場合、Node移動は確定せず、ドラッグ開始前の構造を維持する。
+
+### 12.7 メモ編集中のMindMap状態維持
+
+メモ編集によりNodeデータが更新されても、MindMapの表示位置およびNodeの開閉状態は維持する。
+
+```text
+・MindMapのスクロール位置を維持する
+・Nodeのexpanded/collapsed状態を維持する
+・メモ入力キーがMindMapのショートカットや表示移動を発生させない
+```
+
+### 12.8 レスポンシブレイアウト
+
+画面幅が狭い場合、MindMap領域とMemo領域は横並びではなく縦積みで表示する。
+
+```text
+上: MindMap / Gantt領域
+下: Memo領域
+```
+
+縦積み表示時はMemo領域を1カラム幅いっぱいに表示し、通常時のMemo幅リサイズ設定によって横幅が狭くならないようにする。
 
 ---
 
