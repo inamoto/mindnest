@@ -27,6 +27,7 @@ import {
 
 type AppTheme = 'system' | 'light' | 'dark'
 type ViewMode = 'mindmap' | 'gantt'
+type WorkspaceLayout = 'split' | 'map-only' | 'memo-only'
 
 interface AppSettings {
   theme: AppTheme
@@ -44,6 +45,7 @@ interface MindMapExportBundle {
 }
 
 const SETTINGS_STORAGE_KEY = 'hierarchicalMindMap.settings'
+const WORKSPACE_LAYOUT_STORAGE_KEY = 'mindnest.workspaceLayout'
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
@@ -69,6 +71,16 @@ const nodeColorPalette = [
   { label: 'White', value: '#ffffff' },
   { label: 'Black', value: '#111827' },
 ]
+
+function loadWorkspaceLayout(): WorkspaceLayout {
+  try {
+    const saved = window.localStorage.getItem(WORKSPACE_LAYOUT_STORAGE_KEY)
+
+    return saved === 'split' || saved === 'map-only' || saved === 'memo-only' ? saved : 'split'
+  } catch {
+    return 'split'
+  }
+}
 
 function loadSettings(): AppSettings {
   try {
@@ -104,7 +116,7 @@ function App() {
   const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
   const [undoStack, setUndoStack] = useState<MindMapDocument[]>([])
   const [redoStack, setRedoStack] = useState<MindMapDocument[]>([])
-  const [isMemoVisible, setIsMemoVisible] = useState(true)
+  const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => loadWorkspaceLayout())
   const [memoPanelWidth, setMemoPanelWidth] = useState(36)
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
   const [childMindMapPopover, setChildMindMapPopover] = useState<{ nodeId: string; x: number; y: number; placement: 'bottom' | 'right' } | null>(null)
@@ -114,6 +126,8 @@ function App() {
   const workspaceRef = useRef<HTMLElement | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const isMapVisible = workspaceLayout !== 'memo-only'
+  const isMemoVisible = workspaceLayout !== 'map-only'
 
   useEffect(() => {
     let cancelled = false
@@ -194,6 +208,10 @@ function App() {
   }, [settings])
 
   useEffect(() => {
+    window.localStorage.setItem(WORKSPACE_LAYOUT_STORAGE_KEY, workspaceLayout)
+  }, [workspaceLayout])
+
+  useEffect(() => {
     const menu = contextMenuRef.current
 
     if (!contextMenu || !menu) {
@@ -224,6 +242,15 @@ function App() {
 
   function resetSettings() {
     setSettings(DEFAULT_SETTINGS)
+  }
+
+  function updateWorkspaceLayout(nextLayout: WorkspaceLayout) {
+    if (nextLayout === 'memo-only') {
+      setChildMindMapPopover(null)
+      setContextMenu(null)
+    }
+
+    setWorkspaceLayout(nextLayout)
   }
 
   function updateCurrentRoot(updater: (root: MindMapNodeData) => MindMapNodeData) {
@@ -890,6 +917,11 @@ function App() {
             Gantt
           </button>
         </div>
+        <div className="mode-tabs" role="tablist" aria-label="Workspace layout">
+          <button type="button" className={workspaceLayout === 'split' ? 'active' : ''} onClick={() => updateWorkspaceLayout('split')}>Split</button>
+          <button type="button" className={workspaceLayout === 'map-only' ? 'active' : ''} onClick={() => updateWorkspaceLayout('map-only')}>Map</button>
+          <button type="button" className={workspaceLayout === 'memo-only' ? 'active' : ''} onClick={() => updateWorkspaceLayout('memo-only')}>Memo</button>
+        </div>
         <span className="status">{status}</span>
         <button type="button" className="settings-button" onClick={() => setIsSettingsOpen(true)} aria-label="Open settings" title="Settings">
           ⚙
@@ -898,63 +930,65 @@ function App() {
 
       <section
         ref={workspaceRef}
-        className={`workspace ${viewMode === 'gantt' ? 'gantt-workspace' : 'mindmap-workspace'}${isMemoVisible ? '' : ' memo-hidden'}`}
-        style={isMemoVisible ? { '--memo-panel-width': `${memoPanelWidth}%` } as CSSProperties : undefined}
+        className={`workspace workspace-${workspaceLayout} ${viewMode === 'gantt' ? 'gantt-workspace' : 'mindmap-workspace'}`}
+        style={workspaceLayout === 'split' ? { '--memo-panel-width': `${memoPanelWidth}%` } as CSSProperties : undefined}
       >
-        <section className="mindmap-panel">
-          {viewMode === 'mindmap' ? (
-            <MindMapTree
-              mind={document.data}
-              selectedNodeId={selectedNodeId}
-              focusRequest={mindMapFocusRequest}
-              pendingEditNodeId={pendingEditNodeId}
-              canUndo={undoStack.length > 0}
-              canRedo={redoStack.length > 0}
-              onUndo={handleUndo}
-              onRedo={handleRedo}
-              onMindChange={handleMindMapChange}
-              onSelectNode={handleSelectNode}
-              onNodeContextMenu={(nodeId, position) => {
-                setChildMindMapPopover(null)
-                setContextMenu({ nodeId, x: position.x, y: position.y })
-              }}
-            />
-          ) : (
-            <GanttView
-              root={document.data.data}
-              selectedNodeId={selectedNodeId}
-              onSelectNode={setSelectedNodeId}
-              onUpdateNode={handleGanttNodeUpdate}
-            />
-          )}
-        </section>
+        {isMapVisible && (
+          <section className="mindmap-panel">
+            {viewMode === 'mindmap' ? (
+              <MindMapTree
+                mind={document.data}
+                selectedNodeId={selectedNodeId}
+                focusRequest={mindMapFocusRequest}
+                pendingEditNodeId={pendingEditNodeId}
+                canUndo={undoStack.length > 0}
+                canRedo={redoStack.length > 0}
+                onUndo={handleUndo}
+                onRedo={handleRedo}
+                onMindChange={handleMindMapChange}
+                onSelectNode={handleSelectNode}
+                onNodeContextMenu={(nodeId, position) => {
+                  setChildMindMapPopover(null)
+                  setContextMenu({ nodeId, x: position.x, y: position.y })
+                }}
+              />
+            ) : (
+              <GanttView
+                root={document.data.data}
+                selectedNodeId={selectedNodeId}
+                onSelectNode={setSelectedNodeId}
+                onUpdateNode={handleGanttNodeUpdate}
+              />
+            )}
+          </section>
+        )}
+        {workspaceLayout === 'split' && (
+          <div
+            className="memo-resizer"
+            role="separator"
+            aria-label="Resize memo panel"
+            aria-orientation="vertical"
+            onPointerDown={handleMemoResizeStart}
+          />
+        )}
         {isMemoVisible && (
-          <>
-            <div
-              className="memo-resizer"
-              role="separator"
-              aria-label="Resize memo panel"
-              aria-orientation="vertical"
-              onPointerDown={handleMemoResizeStart}
-            />
-            <NodeMemo
-              key={selectedNode?.id ?? 'empty-memo'}
-              node={selectedNode}
-              focusRequest={memoFocusRequest}
-              previewRequest={memoPreviewRequest}
-              onMemoChange={handleMemoChange}
-              onEscapeEditor={() => {
-                setMemoPreviewRequest((request) => request + 1)
-                setMindMapFocusRequest((request) => request + 1)
-              }}
-              onHideMemo={() => setIsMemoVisible(false)}
-            />
-          </>
+          <NodeMemo
+            key={selectedNode?.id ?? 'empty-memo'}
+            node={selectedNode}
+            focusRequest={memoFocusRequest}
+            previewRequest={memoPreviewRequest}
+            onMemoChange={handleMemoChange}
+            onEscapeEditor={() => {
+              setMemoPreviewRequest((request) => request + 1)
+              setMindMapFocusRequest((request) => request + 1)
+            }}
+            onHideMemo={() => updateWorkspaceLayout('map-only')}
+          />
         )}
       </section>
 
-      {!isMemoVisible && (
-        <button type="button" className="show-memo-button" onClick={() => setIsMemoVisible(true)} aria-label="Show memo" title="Show memo">
+      {workspaceLayout === 'map-only' && (
+        <button type="button" className="show-memo-button" onClick={() => updateWorkspaceLayout('split')} aria-label="Show memo" title="Show memo">
           ◂
         </button>
       )}
