@@ -416,6 +416,67 @@ test('copies and pastes a node subtree as a child', async ({ page }) => {
   await expect(page.locator('jmnode:visible', { hasText: 'CopySourceChild Copy' })).toBeVisible()
 })
 
+test('cuts and pastes a node as a child', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'CutParent')
+  await page.locator('jmnode', { hasText: /^MindNest$/ }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'CutSource')
+
+  await page.locator('jmnode', { hasText: /^CutSource$/ }).click()
+  await page.keyboard.press('Control+X')
+  await page.locator('jmnode', { hasText: /^CutParent$/ }).click()
+  await page.keyboard.press('Control+V')
+
+  await expect(page.locator('jmnode:visible', { hasText: /^CutSource$/ })).toBeVisible()
+  await selectNode(page, 'CutSource')
+  await expect(page.getByRole('heading', { name: 'CutSource', level: 2 })).toBeVisible()
+})
+
+test('does not scroll the mind map panel while dragging a node', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'DragNoScroll')
+
+  const panel = page.locator('.jsmind-inner')
+  const node = page.locator('jmnode', { hasText: /^DragNoScroll$/ })
+  const nodeBox = await node.boundingBox()
+
+  if (!nodeBox) {
+    throw new Error('DragNoScroll node box was not available')
+  }
+
+  const beforeScroll = await panel.evaluate((element) => {
+    element.scrollLeft = 24
+    element.scrollTop = 24
+
+    return {
+      left: element.scrollLeft,
+      top: element.scrollTop,
+    }
+  })
+
+  await page.mouse.move(nodeBox.x + nodeBox.width / 2, nodeBox.y + nodeBox.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(nodeBox.x + nodeBox.width / 2 + 180, nodeBox.y + nodeBox.height / 2 + 120, { steps: 8 })
+
+  const duringScroll = await panel.evaluate((element) => ({
+    left: element.scrollLeft,
+    top: element.scrollTop,
+  }))
+
+  await page.mouse.up()
+
+  expect(duringScroll).toEqual(beforeScroll)
+})
+
 test('imports JSON as child when replace confirmation is dismissed', async ({ page }) => {
   await resetAppStorage(page)
   await page.reload()

@@ -99,6 +99,26 @@ export function replaceNode(root: MindMapNodeData, nodeId: string, replacementNo
   }
 }
 
+export function isDescendantNode(root: MindMapNodeData, ancestorId: string, nodeId: string): boolean {
+  const ancestor = findNode(root, ancestorId)
+
+  if (!ancestor) {
+    return false
+  }
+
+  return ancestor.children?.some((child) => child.id === nodeId || isDescendantNode(child, child.id, nodeId)) ?? false
+}
+
+export function moveNodeAsChild(root: MindMapNodeData, nodeId: string, parentId: string): MindMapNodeData {
+  const node = findNode(root, nodeId)
+
+  if (!node || node.id === root.id || node.id === parentId || isDescendantNode(root, nodeId, parentId)) {
+    return root
+  }
+
+  return addChildNode(deleteNode(root, nodeId), parentId, node)
+}
+
 export function findParentNode(root: MindMapNodeData, nodeId: string): MindMapNodeData | null {
   for (const child of root.children ?? []) {
     if (child.id === nodeId) {

@@ -8,10 +8,24 @@ type DraggableNodeInstance = InstanceType<typeof DraggableNode>
 
 const draggableNodeInstances = new WeakMap<jsMind, DraggableNodeInstance>()
 const originalDraggableNodeInit = DraggableNode.prototype.init
+const originalDraggableNodeDrag = DraggableNode.prototype.drag
 
 DraggableNode.prototype.init = function patchedInit() {
   draggableNodeInstances.set(this.jm, this)
   originalDraggableNodeInit.call(this)
+}
+
+DraggableNode.prototype.drag = function patchedDrag(event: MouseEvent | TouchEvent) {
+  const panel = this.view_panel
+  const scrollLeft = panel.scrollLeft
+  const scrollTop = panel.scrollTop
+
+  originalDraggableNodeDrag.call(this, event)
+
+  if (this.capture) {
+    panel.scrollLeft = scrollLeft
+    panel.scrollTop = scrollTop
+  }
 }
 
 function cancelDraggableNode(dragger: DraggableNodeInstance) {
@@ -265,6 +279,8 @@ export function MindMapTree({
           line_width: 7,
           line_color: 'rgba(37, 99, 235, 0.85)',
           line_color_invalid: 'rgba(220, 38, 38, 0.85)',
+          scrolling_trigger_width: 0,
+          scrolling_step_length: 0,
         },
       },
     })
@@ -328,6 +344,41 @@ export function MindMapTree({
     let isDraggingNode = false
     let dragStartMind: JsMindData | null = null
     let dragStartSelectedNodeId: string | undefined
+    let lockedScrollPosition: { windowX: number; windowY: number; documentLeft: number; documentTop: number; bodyLeft: number; bodyTop: number; panelLeft: number; panelTop: number } | null = null
+
+    const getPanel = () => (instance as JsMindWithInternalView).view.e_panel
+
+    const lockScrollPosition = () => {
+      const panel = getPanel()
+      lockedScrollPosition = {
+        windowX: window.scrollX,
+        windowY: window.scrollY,
+        documentLeft: document.documentElement.scrollLeft,
+        documentTop: document.documentElement.scrollTop,
+        bodyLeft: document.body.scrollLeft,
+        bodyTop: document.body.scrollTop,
+        panelLeft: panel?.scrollLeft ?? 0,
+        panelTop: panel?.scrollTop ?? 0,
+      }
+    }
+
+    const restoreLockedScrollPosition = () => {
+      if (!lockedScrollPosition) {
+        return
+      }
+
+      const panel = getPanel()
+      window.scrollTo(lockedScrollPosition.windowX, lockedScrollPosition.windowY)
+      document.documentElement.scrollLeft = lockedScrollPosition.documentLeft
+      document.documentElement.scrollTop = lockedScrollPosition.documentTop
+      document.body.scrollLeft = lockedScrollPosition.bodyLeft
+      document.body.scrollTop = lockedScrollPosition.bodyTop
+
+      if (panel) {
+        panel.scrollLeft = lockedScrollPosition.panelLeft
+        panel.scrollTop = lockedScrollPosition.panelTop
+      }
+    }
 
     const stopViewDrag = (event?: MouseEvent) => {
       isPointerDownInMindMap = false
@@ -339,6 +390,7 @@ export function MindMapTree({
         screenX: event?.screenX ?? 0,
         screenY: event?.screenY ?? 0,
       })
+      lockedScrollPosition = null
       const internalView = (instance as JsMindWithInternalView).view
       const mouseUpTargets = [container, internalView.container, internalView.e_panel].filter(
         (target): target is HTMLElement => target instanceof HTMLElement,
@@ -393,6 +445,10 @@ export function MindMapTree({
       isDraggingNode = Boolean(node && !node.isroot)
       dragStartMind = isDraggingNode ? instance.get_data('node_tree') as JsMindData : null
       dragStartSelectedNodeId = isDraggingNode ? nodeId ?? undefined : undefined
+
+      if (isDraggingNode) {
+        lockScrollPosition()
+      }
     }
 
     const handleMouseLeave = (event: MouseEvent) => {
@@ -408,6 +464,26 @@ export function MindMapTree({
         } else if (isPointerDownInMindMap) {
           stopViewDrag(event)
         }
+      }
+    }
+
+    const preventScrollWhileDragging = (event: Event) => {
+      const dragger = draggableNodeInstances.get(instance)
+
+      if (isDraggingNode || dragger?.capture) {
+        event.preventDefault()
+        event.stopPropagation()
+        restoreLockedScrollPosition()
+        window.requestAnimationFrame(restoreLockedScrollPosition)
+      }
+    }
+
+    const restoreScrollWhileDragging = () => {
+      const dragger = draggableNodeInstances.get(instance)
+
+      if (isDraggingNode || dragger?.capture) {
+        restoreLockedScrollPosition()
+        window.requestAnimationFrame(restoreLockedScrollPosition)
       }
     }
 
@@ -429,6 +505,7 @@ export function MindMapTree({
       isDraggingNode = false
       dragStartMind = null
       dragStartSelectedNodeId = undefined
+      lockedScrollPosition = null
     }
 
     const handleWindowMouseOut = (event: MouseEvent) => {
@@ -470,8 +547,12 @@ export function MindMapTree({
     container.addEventListener('mousedown', handleMouseDown, true)
     canvas.addEventListener('mouseleave', handleMouseLeave)
     window.document.addEventListener('mousemove', handleMouseMove, true)
+    window.document.addEventListener('mousemove', restoreScrollWhileDragging)
     window.document.addEventListener('mouseup', handleMouseUp, true)
     window.document.addEventListener('mouseout', handleWindowMouseOut, true)
+    window.addEventListener('scroll', restoreScrollWhileDragging, true)
+    window.addEventListener('wheel', preventScrollWhileDragging, { capture: true, passive: false })
+    window.addEventListener('touchmove', preventScrollWhileDragging, { capture: true, passive: false })
     window.addEventListener('mouseup', handleMouseUp, true)
     window.addEventListener('blur', handleWindowBlur)
     container.addEventListener('dblclick', handleDoubleClick)
@@ -481,8 +562,12 @@ export function MindMapTree({
       container.removeEventListener('mousedown', handleMouseDown, true)
       canvas.removeEventListener('mouseleave', handleMouseLeave)
       window.document.removeEventListener('mousemove', handleMouseMove, true)
+      window.document.removeEventListener('mousemove', restoreScrollWhileDragging)
       window.document.removeEventListener('mouseup', handleMouseUp, true)
       window.document.removeEventListener('mouseout', handleWindowMouseOut, true)
+      window.removeEventListener('scroll', restoreScrollWhileDragging, true)
+      window.removeEventListener('wheel', preventScrollWhileDragging, true)
+      window.removeEventListener('touchmove', preventScrollWhileDragging, true)
       window.removeEventListener('mouseup', handleMouseUp, true)
       window.removeEventListener('blur', handleWindowBlur)
       container.removeEventListener('dblclick', handleDoubleClick)

@@ -23,6 +23,8 @@ import {
   deleteNode,
   findNode,
   generateId,
+  isDescendantNode,
+  moveNodeAsChild,
   replaceNode,
   updateNode,
 } from './tree'
@@ -30,6 +32,9 @@ import {
 type AppTheme = 'system' | 'light' | 'dark'
 type ViewMode = 'mindmap' | 'gantt'
 type WorkspaceLayout = 'split' | 'map-only' | 'memo-only'
+type NodeClipboard =
+  | { mode: 'copy'; node: MindMapNodeData }
+  | { mode: 'cut'; node: MindMapNodeData; sourceNodeId: string }
 
 interface AppSettings {
   theme: AppTheme
@@ -118,7 +123,7 @@ function App() {
   const [pendingEditNodeId, setPendingEditNodeId] = useState<string | null>(null)
   const [undoStack, setUndoStack] = useState<MindMapDocument[]>([])
   const [redoStack, setRedoStack] = useState<MindMapDocument[]>([])
-  const [copiedNode, setCopiedNode] = useState<MindMapNodeData | null>(null)
+  const [nodeClipboard, setNodeClipboard] = useState<NodeClipboard | null>(null)
   const [workspaceLayout, setWorkspaceLayout] = useState<WorkspaceLayout>(() => loadWorkspaceLayout())
   const [memoPanelWidth, setMemoPanelWidth] = useState(36)
   const [contextMenu, setContextMenu] = useState<{ nodeId: string; x: number; y: number } | null>(null)
@@ -336,16 +341,39 @@ function App() {
       return
     }
 
-    setCopiedNode(structuredClone(node))
+    setNodeClipboard({ mode: 'copy', node: structuredClone(node) })
     setStatus(`Copied "${node.topic}"`)
   }
 
-  function handlePasteNode(parentId = selectedNodeId) {
-    if (!copiedNode || !parentId) {
+  function handleCutNode(node = selectedNode) {
+    if (!document || !node || node.id === document.data.data.id) {
       return
     }
 
-    const pastedNode = cloneNodeWithNewIds(copiedNode)
+    setNodeClipboard({ mode: 'cut', node: structuredClone(node), sourceNodeId: node.id })
+    setStatus(`Cut "${node.topic}"`)
+  }
+
+  function handlePasteNode(parentId = selectedNodeId) {
+    if (!document || !nodeClipboard || !parentId) {
+      return
+    }
+
+    if (nodeClipboard.mode === 'cut') {
+      if (nodeClipboard.sourceNodeId === parentId || isDescendantNode(document.data.data, nodeClipboard.sourceNodeId, parentId)) {
+        window.alert('Cannot paste a cut node into itself or its descendants.')
+        return
+      }
+
+      updateCurrentRoot((root) => moveNodeAsChild(root, nodeClipboard.sourceNodeId, parentId))
+      setSelectedNodeId(nodeClipboard.sourceNodeId)
+      setNodeClipboard(null)
+      setPendingEditNodeId(null)
+      setStatus(`Moved "${nodeClipboard.node.topic}"`)
+      return
+    }
+
+    const pastedNode = cloneNodeWithNewIds(nodeClipboard.node)
     updateCurrentRoot((root) => addChildNode(root, parentId, pastedNode))
     setSelectedNodeId(pastedNode.id)
     setPendingEditNodeId(null)
@@ -827,6 +855,12 @@ function App() {
       return
     }
 
+    if (withModifier && shortcutKey === 'x') {
+      consumeShortcutEvent(event)
+      handleCutNode()
+      return
+    }
+
     if (withModifier && shortcutKey === 'v') {
       consumeShortcutEvent(event)
       handlePasteNode()
@@ -1073,7 +1107,11 @@ function App() {
             <span>Copy Node</span>
             <kbd>Ctrl+C</kbd>
           </button>
-          <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handlePasteNode(contextMenuNode.id))} disabled={!copiedNode}>
+          <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handleCutNode(contextMenuNode))} disabled={contextMenuNode.id === document.data.data.id}>
+            <span>Cut Node</span>
+            <kbd>Ctrl+X</kbd>
+          </button>
+          <button type="button" role="menuitem" onClick={() => runContextMenuAction(() => handlePasteNode(contextMenuNode.id))} disabled={!nodeClipboard}>
             <span>Paste as Child</span>
             <kbd>Ctrl+V</kbd>
           </button>

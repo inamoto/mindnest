@@ -5,9 +5,10 @@ MindNest is a browser-based mind map app for organizing ideas, notes, WBS, and s
 ## Features
 
 - MindMap editing with draggable nodes
-- Copy and paste MindMap node subtrees
+- Copy, cut, and paste MindMap node subtrees
 - Markdown memo per node
 - Split, Map-only, and Memo-only workspace layouts
+- Prevents map scrolling while dragging nodes
 - Preserves MindMap pan and expanded/collapsed state while editing memos
 - Child MindMap navigation
 - Node color customization
