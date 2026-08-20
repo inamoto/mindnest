@@ -1,7 +1,8 @@
-import { Suspense, lazy, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useRef, useState, type MouseEvent } from 'react'
 import type { MindMapNodeData } from '../types'
 import { MarkdownEditor } from './MarkdownEditor'
-import { MemoToolbar, type MemoMode } from './MemoToolbar'
+type MemoMode = 'preview' | 'edit'
+type TextSelection = { start: number; end: number; direction: 'forward' | 'backward' | 'none' }
 
 const MarkdownPreview = lazy(() =>
   import('./MarkdownPreview').then((module) => ({ default: module.MarkdownPreview })),
@@ -13,14 +14,14 @@ interface NodeMemoProps {
   previewRequest: number
   onMemoChange: (memo: string) => void
   onEscapeEditor: () => void
-  onHideMemo: () => void
 }
 
-export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onEscapeEditor, onHideMemo }: NodeMemoProps) {
+export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onEscapeEditor }: NodeMemoProps) {
   const [mode, setMode] = useState<MemoMode>('preview')
   const [isMarkdownHelpVisible, setIsMarkdownHelpVisible] = useState(false)
   const [pendingFocusRequest, setPendingFocusRequest] = useState(0)
   const editorRef = useRef<HTMLTextAreaElement | null>(null)
+  const editorSelectionsRef = useRef(new Map<string, TextSelection>())
 
   useEffect(() => {
     if (focusRequest <= 0 || !node) {
@@ -62,16 +63,18 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
         return
       }
 
-      const wasAlreadyFocused = document.activeElement === editor
+      const savedSelection = node ? editorSelectionsRef.current.get(node.id) : undefined
       editor.focus()
 
-      if (!wasAlreadyFocused && document.activeElement === editor && editor.value.length === initialValueLength) {
-        editor.setSelectionRange(editor.value.length, editor.value.length)
+      if (document.activeElement === editor && editor.value.length === initialValueLength) {
+        const start = Math.min(savedSelection?.start ?? editor.value.length, editor.value.length)
+        const end = Math.min(savedSelection?.end ?? editor.value.length, editor.value.length)
+        editor.setSelectionRange(start, end, savedSelection?.direction ?? 'none')
       }
     }, 0)
 
     return () => window.clearTimeout(timeoutId)
-  }, [mode, pendingFocusRequest])
+  }, [mode, node, pendingFocusRequest])
 
   if (!node) {
     return (
@@ -88,6 +91,20 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
     setPendingFocusRequest((request) => request + 1)
   }
 
+  function handlePreviewClick(event: MouseEvent<HTMLDivElement>) {
+    if (event.target instanceof Element && event.target.closest('a, button, input, textarea, select, [role="button"]')) {
+      return
+    }
+
+    const selection = window.getSelection()
+
+    if (selection && !selection.isCollapsed) {
+      return
+    }
+
+    startEditing()
+  }
+
   return (
     <aside className="memo-panel">
       <header className="memo-header">
@@ -95,16 +112,6 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
           <h2>{node.topic}</h2>
         </div>
         <div className="memo-header-actions">
-          <MemoToolbar
-            mode={mode}
-            onModeChange={(nextMode) => {
-              setMode(nextMode)
-
-              if (nextMode === 'edit') {
-                setPendingFocusRequest((request) => request + 1)
-              }
-            }}
-          />
           <button
             type="button"
             aria-label="Show Markdown help"
@@ -115,7 +122,6 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
           >
             ?
           </button>
-          <button type="button" onClick={onHideMemo} aria-label="Hide memo" title="Hide memo">▸</button>
         </div>
       </header>
 
@@ -151,13 +157,14 @@ export function NodeMemo({ node, focusRequest, previewRequest, onMemoChange, onE
         <MarkdownEditor
           editorRef={editorRef}
           value={memo}
+          onSelectionChange={(selection) => editorSelectionsRef.current.set(node.id, selection)}
           onChange={onMemoChange}
           onBlur={() => setMode('preview')}
           onEscape={onEscapeEditor}
         />
       ) : (
         <Suspense fallback={<p className="empty-preview markdown-preview-loading">Loading preview...</p>}>
-          <MarkdownPreview value={memo} onDoubleClick={startEditing} />
+          <MarkdownPreview value={memo} onClick={handlePreviewClick} />
         </Suspense>
       )}
     </aside>

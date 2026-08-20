@@ -694,7 +694,23 @@ NodeドラッグをMindMap領域外でキャンセルした場合、Node移動�
 ・メモ入力キーがMindMapのショートカットや表示移動を発生させない
 ```
 
-### 12.9 Workspace表示モードとレスポンシブレイアウト
+メモ editor は、Nodeごとに直前のカーソル位置および選択範囲を保持する。
+
+```text
+Ctrl / Cmd + M
+  Preview表示中: 選択NodeのMemoをedit modeで開く。
+  Memo edit中: Preview表示へ戻る。
+```
+
+`Ctrl / Cmd + M` でPreviewへ戻った後、再度edit modeへ入った場合、同じNodeでは前回のカーソル位置を復元する。保存済みカーソル位置がない初回編集では、従来どおり本文末尾へカーソルを置く。
+
+### 12.9 ブラウザ表示
+
+ブラウザタブのtitleは、現在開いているMindMap DocumentのRoot Node `topic` と同期する。`topic` が空白のみの場合は `MindNest` を表示する。
+
+faviconは `public/favicon.png` を使用し、HTMLでは `type="image/png"` として参照する。
+
+### 12.10 Workspace表示モードとレスポンシブレイアウト
 
 Workspaceには以下の表示モードを設ける。
 
@@ -760,6 +776,9 @@ MapモードおよびMemoモードでは、表示対象の領域を1カラム・
 ・Gantt詳細フィールドを折りたためる
 ・Gantt表示状態を保持できる
 ・Ganttモードでも選択TaskのMemoを右側に表示できる
+・Ctrl / Cmd + MでMemo preview/editを切り替えたとき、NodeごとのMemo editorカーソル位置を復元できる
+・ブラウザタブtitleを現在開いているMindMapのtopic名に同期できる
+・faviconとしてpublic/favicon.pngを使用できる
 ・JSON Export / ImportにGantt用フィールドを含める
 ```
 
@@ -824,11 +843,37 @@ MapモードおよびMemoモードでは、表示対象の領域を1カラム・
 16. Gantt情報が保持されている
 
 17. JSON ExportするとGantt用フィールドも含まれる
+
+18. Memo edit中にカーソルを本文途中へ移動し、Ctrl / Cmd + MでPreviewへ戻る
+
+19. 再度Ctrl / Cmd + MでMemo editへ入ると、同じカーソル位置が復元される
+
+20. Child MindMapを開いた場合、ブラウザタブtitleが開いているMindMapのtopic名へ変わる
 ```
 
 ---
 
-## 17. 実装方針
+## 17. テスト方針
+
+E2EテストはPlaywrightで実行する。
+
+```text
+npm run test:e2e
+```
+
+Node.js APIを利用するE2Eテストは `tsconfig.e2e.json` で型チェック対象に含め、`@types/node` の型を有効にする。
+
+回帰テストとして以下を確認する。
+
+```text
+・Ctrl / Cmd + MによるMemo editor cursor位置復元
+・JSON Importのreplace / append分岐
+・favicon参照およびHTML titleの基本動作
+```
+
+---
+
+## 18. 実装方針
 
 Version 2.0 MVPではGantt描画に `gantt-task-react` を利用する。
 

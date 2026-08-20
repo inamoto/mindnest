@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer'
 import { expect, test, type Page } from '@playwright/test'
 
 test.describe.configure({ mode: 'serial' })
@@ -435,6 +436,26 @@ test('cuts and pastes a node as a child', async ({ page }) => {
   await expect(page.locator('jmnode:visible', { hasText: /^CutSource$/ })).toBeVisible()
   await selectNode(page, 'CutSource')
   await expect(page.getByRole('heading', { name: 'CutSource', level: 2 })).toBeVisible()
+})
+
+test('restores selected node from URL', async ({ page }) => {
+  await resetAppStorage(page)
+  await page.reload()
+
+  await page.locator('jmnode', { hasText: 'MindNest' }).click({ button: 'right' })
+  await page.getByRole('menuitem', { name: '+ Child Node' }).click()
+  await renameEditingNode(page, 'UrlTarget')
+  await selectNode(page, 'UrlTarget')
+
+  await expect.poll(() => page.evaluate(() => new URL(window.location.href).searchParams.get('node'))).not.toBeNull()
+  await page.waitForTimeout(600)
+  const selectedUrl = page.url()
+
+  await page.goto('about:blank')
+  await page.goto(selectedUrl)
+
+  await expect(page.locator('jmnode:visible', { hasText: /^UrlTarget$/ })).toHaveClass(/selected/)
+  await expect(page.getByRole('heading', { name: 'UrlTarget', level: 2 })).toBeVisible()
 })
 
 test('does not scroll the mind map panel while dragging a node', async ({ page }) => {

@@ -5,6 +5,7 @@ import 'jsmind/style/jsmind.css'
 import type { JsMindData, MindMapNodeData } from '../types'
 
 type DraggableNodeInstance = InstanceType<typeof DraggableNode>
+type TextSelection = { start: number; end: number; direction?: 'forward' | 'backward' | 'none' }
 
 const draggableNodeInstances = new WeakMap<jsMind, DraggableNodeInstance>()
 const originalDraggableNodeInit = DraggableNode.prototype.init
@@ -63,6 +64,7 @@ interface MindMapTreeProps {
   onUndo: () => void
   onRedo: () => void
   onMindChange: (mind: JsMindData, selectedNodeId?: string) => void
+  onMindViewChange: (mind: JsMindData) => void
   onSelectNode: (nodeId: string, position?: { x: number; y: number; placement: 'bottom' | 'right' }) => void
   onNodeContextMenu: (nodeId: string, position: { x: number; y: number }) => void
 }
@@ -102,7 +104,7 @@ function collectExpandedState(node: MindMapNodeData, state = new Map<string, boo
 }
 
 function applyExpandedState(node: MindMapNodeData, state: Map<string, boolean>): MindMapNodeData {
-  const expanded = state.get(node.id)
+  const expanded = node.expanded === true ? true : state.get(node.id)
 
   return {
     ...node,
@@ -156,6 +158,9 @@ type JsMindWithInternalView = jsMind & {
   view: jsMind['view'] & {
     container?: HTMLElement
     e_panel?: HTMLElement
+    e_editor?: HTMLInputElement
+    edit_node_begin: (node: NonNullable<ReturnType<jsMind['get_node']>>) => void
+    edit_node_end: () => void
   }
 }
 
@@ -163,7 +168,55 @@ function getZoomPercent(instance: jsMind) {
   return Math.round(((instance as ZoomableJsMind).view.zoom_current ?? 1) * 100)
 }
 
-function beginInlineEdit(instance: jsMind, nodeId: string, attempt = 0) {
+function getInlineEditor(container: HTMLElement) {
+  return container.querySelector<HTMLInputElement | HTMLTextAreaElement>('.jsmind-editor')
+}
+
+function applyInlineEditorSelection(editor: HTMLInputElement | HTMLTextAreaElement, selection: TextSelection) {
+  const start = Math.min(selection.start, editor.value.length)
+  const end = Math.min(selection.end, editor.value.length)
+
+  editor.focus()
+  editor.setSelectionRange(start, end, selection.direction)
+}
+
+function restoreInlineEditorSelection(container: HTMLElement, selection: TextSelection | undefined, onRestoreStart: () => void, onRestoreEnd: () => void, attempt = 0) {
+  if (!selection) {
+    return
+  }
+
+  const editor = getInlineEditor(container)
+
+  if (editor) {
+    onRestoreStart()
+    applyInlineEditorSelection(editor, selection)
+    window.setTimeout(onRestoreEnd, 0)
+  }
+
+  if (attempt >= 8) {
+    return
+  }
+
+  window.setTimeout(() => restoreInlineEditorSelection(container, selection, onRestoreStart, onRestoreEnd, attempt + 1), attempt < 3 ? 0 : 25)
+}
+
+function rememberInlineEditorSelection(instance: jsMind, container: HTMLElement, selections: Map<string, TextSelection>) {
+  const editor = getInlineEditor(container)
+  const editingNodeId = instance.view.get_editing_node()?.id
+    ?? editor?.closest('jmnode')?.getAttribute('nodeid')
+
+  if (!editingNodeId || !editor || document.activeElement !== editor) {
+    return
+  }
+
+  selections.set(editingNodeId, {
+    start: editor.selectionStart ?? editor.value.length,
+    end: editor.selectionEnd ?? editor.value.length,
+    direction: editor.selectionDirection ?? 'none',
+  })
+}
+
+function beginInlineEdit(instance: jsMind, container: HTMLElement, nodeId: string, selection: TextSelection | undefined, onRestoreStart: () => void, onRestoreEnd: () => void, attempt = 0) {
   const node = instance.get_node(nodeId)
 
   if (node) {
@@ -174,10 +227,11 @@ function beginInlineEdit(instance: jsMind, nodeId: string, attempt = 0) {
   const editingNode = instance.view.get_editing_node()
 
   if (editingNode?.id === nodeId || attempt >= 8) {
+    restoreInlineEditorSelection(container, selection, onRestoreStart, onRestoreEnd)
     return
   }
 
-  window.setTimeout(() => beginInlineEdit(instance, nodeId, attempt + 1), 50)
+  window.setTimeout(() => beginInlineEdit(instance, container, nodeId, selection, onRestoreStart, onRestoreEnd, attempt + 1), 50)
 }
 
 export function MindMapTree({
@@ -190,6 +244,7 @@ export function MindMapTree({
   onUndo,
   onRedo,
   onMindChange,
+  onMindViewChange,
   onSelectNode,
   onNodeContextMenu,
 }: MindMapTreeProps) {
@@ -198,16 +253,19 @@ export function MindMapTree({
   const jsMindRef = useRef<jsMind | null>(null)
   const scrollPositionRef = useRef<{ left: number; top: number } | null>(null)
   const expandedStateRef = useRef<Map<string, boolean> | null>(null)
+  const editorSelectionRef = useRef(new Map<string, TextSelection>())
   const onSelectNodeRef = useRef(onSelectNode)
   const onMindChangeRef = useRef(onMindChange)
+  const onMindViewChangeRef = useRef(onMindViewChange)
   const onNodeContextMenuRef = useRef(onNodeContextMenu)
   const [zoomPercent, setZoomPercent] = useState(100)
 
   useEffect(() => {
     onMindChangeRef.current = onMindChange
+    onMindViewChangeRef.current = onMindViewChange
     onSelectNodeRef.current = onSelectNode
     onNodeContextMenuRef.current = onNodeContextMenu
-  }, [onMindChange, onSelectNode, onNodeContextMenu])
+  }, [onMindChange, onMindViewChange, onSelectNode, onNodeContextMenu])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -218,6 +276,15 @@ export function MindMapTree({
     }
 
     container.innerHTML = ''
+
+    const editorSelections = editorSelectionRef.current
+    let isRestoringInlineEditorSelection = false
+    const startInlineEditorSelectionRestore = () => {
+      isRestoringInlineEditorSelection = true
+    }
+    const endInlineEditorSelectionRestore = () => {
+      isRestoringInlineEditorSelection = false
+    }
 
     const instance = new jsMind({
       container,
@@ -285,6 +352,57 @@ export function MindMapTree({
       },
     })
 
+    const instanceWithInternalView = instance as JsMindWithInternalView
+    const originalViewEditNodeBegin = instanceWithInternalView.view.edit_node_begin.bind(instanceWithInternalView.view)
+    const originalEditNodeEnd = instanceWithInternalView.view.edit_node_end.bind(instanceWithInternalView.view)
+
+    instanceWithInternalView.view.edit_node_begin = (node) => {
+      const originalInputSelect = HTMLInputElement.prototype.select
+
+      HTMLInputElement.prototype.select = function patchedSelect() {
+        if (this.classList.contains('jsmind-editor')) {
+          return
+        }
+
+        originalInputSelect.call(this)
+      }
+
+      try {
+        originalViewEditNodeBegin(node)
+      } finally {
+        HTMLInputElement.prototype.select = originalInputSelect
+      }
+
+      const editor = instanceWithInternalView.view.e_editor
+
+      const selection = editorSelections.get(node.id)
+
+      if (editor && selection) {
+        startInlineEditorSelectionRestore()
+        applyInlineEditorSelection(editor, selection)
+        window.setTimeout(endInlineEditorSelectionRestore, 0)
+      }
+
+      restoreInlineEditorSelection(container, editorSelections.get(node.id), startInlineEditorSelectionRestore, endInlineEditorSelectionRestore)
+    }
+
+    instanceWithInternalView.view.edit_node_end = () => {
+      const editingNode = instance.view.get_editing_node()
+      const editor = instanceWithInternalView.view.e_editor
+
+      if (editingNode && editor && !editorSelections.has(editingNode.id)) {
+        editorSelections.set(editingNode.id, {
+          start: editor.selectionStart ?? editor.value.length,
+          end: editor.selectionEnd ?? editor.value.length,
+          direction: editor.selectionDirection ?? 'none',
+        })
+      } else if (!editingNode) {
+        rememberInlineEditorSelection(instance, container, editorSelections)
+      }
+
+      originalEditNodeEnd()
+    }
+
     const mindWithPreservedExpandedState = expandedStateRef.current
       ? {
         ...mind,
@@ -319,12 +437,18 @@ export function MindMapTree({
         onSelectNodeRef.current(data.node, getNodePopoverPosition(container, mind.data, data.node))
       }
 
+      if (type === event_type.show && (data.evt === 'expand_node' || data.evt === 'collapse_node')) {
+        onMindViewChangeRef.current(instance.get_data('node_tree') as JsMindData)
+      }
+
       if (type === event_type.edit) {
+        rememberInlineEditorSelection(instance, container, editorSelections)
+
         if (data.evt === 'add_node' || data.evt === 'insert_node_after' || data.evt === 'insert_node_before') {
           const nodeId = data.node
 
           if (nodeId) {
-            window.setTimeout(() => beginInlineEdit(instance, nodeId), 0)
+            window.setTimeout(() => beginInlineEdit(instance, container, nodeId, editorSelections.get(nodeId), startInlineEditorSelectionRestore, endInlineEditorSelectionRestore), 0)
             onSelectNodeRef.current(nodeId, getNodePopoverPosition(container, mind.data, nodeId))
           }
 
@@ -438,6 +562,7 @@ export function MindMapTree({
     }
 
     const handleMouseDown = (event: MouseEvent) => {
+      rememberInlineEditorSelection(instance, container, editorSelections)
       focusMindMap()
       isPointerDownInMindMap = event.button === 0
       const nodeId = getNodeIdFromEventTarget(event.target)
@@ -518,6 +643,18 @@ export function MindMapTree({
       cancelActiveDrag()
     }
 
+    const handleInlineEditorKeyDown = () => {
+      if (!isRestoringInlineEditorSelection) {
+        rememberInlineEditorSelection(instance, container, editorSelections)
+      }
+    }
+
+    const handleInlineEditorSelectionChange = () => {
+      if (!isRestoringInlineEditorSelection) {
+        rememberInlineEditorSelection(instance, container, editorSelections)
+      }
+    }
+
     const handleDoubleClick = (event: MouseEvent) => {
       const nodeId = getNodeIdFromEventTarget(event.target)
 
@@ -528,7 +665,7 @@ export function MindMapTree({
       event.preventDefault()
       instance.select_node(nodeId)
       onSelectNodeRef.current(nodeId, getNodePopoverPosition(container, mind.data, nodeId))
-      beginInlineEdit(instance, nodeId)
+      beginInlineEdit(instance, container, nodeId, editorSelections.get(nodeId), startInlineEditorSelectionRestore, endInlineEditorSelectionRestore)
     }
 
     const handleContextMenu = (event: MouseEvent) => {
@@ -555,6 +692,12 @@ export function MindMapTree({
     window.addEventListener('touchmove', preventScrollWhileDragging, { capture: true, passive: false })
     window.addEventListener('mouseup', handleMouseUp, true)
     window.addEventListener('blur', handleWindowBlur)
+    container.addEventListener('keydown', handleInlineEditorKeyDown, true)
+    container.addEventListener('keyup', handleInlineEditorSelectionChange, true)
+    container.addEventListener('input', handleInlineEditorSelectionChange, true)
+    window.document.addEventListener('selectionchange', handleInlineEditorSelectionChange)
+    container.addEventListener('mouseup', handleInlineEditorSelectionChange, true)
+    container.addEventListener('blur', handleInlineEditorSelectionChange, true)
     container.addEventListener('dblclick', handleDoubleClick)
     container.addEventListener('contextmenu', handleContextMenu)
 
@@ -570,8 +713,15 @@ export function MindMapTree({
       window.removeEventListener('touchmove', preventScrollWhileDragging, true)
       window.removeEventListener('mouseup', handleMouseUp, true)
       window.removeEventListener('blur', handleWindowBlur)
+      container.removeEventListener('keydown', handleInlineEditorKeyDown, true)
+      container.removeEventListener('keyup', handleInlineEditorSelectionChange, true)
+      container.removeEventListener('input', handleInlineEditorSelectionChange, true)
+      window.document.removeEventListener('selectionchange', handleInlineEditorSelectionChange)
+      container.removeEventListener('mouseup', handleInlineEditorSelectionChange, true)
+      container.removeEventListener('blur', handleInlineEditorSelectionChange, true)
       container.removeEventListener('dblclick', handleDoubleClick)
       container.removeEventListener('contextmenu', handleContextMenu)
+      rememberInlineEditorSelection(instance, container, editorSelections)
       expandedStateRef.current = collectExpandedState((instance.get_data('node_tree') as JsMindData).data)
 
       const panel = (instance as JsMindWithInternalView).view.e_panel
@@ -616,7 +766,12 @@ export function MindMapTree({
       const instance = jsMindRef.current
 
       if (instance) {
-        window.setTimeout(() => beginInlineEdit(instance, pendingEditNodeId), 0)
+        const container = containerRef.current
+
+        if (container) {
+          const editorSelections = editorSelectionRef.current
+          window.setTimeout(() => beginInlineEdit(instance, container, pendingEditNodeId, editorSelections.get(pendingEditNodeId), () => undefined, () => undefined), 0)
+        }
       }
     }
   }, [pendingEditNodeId, mind])

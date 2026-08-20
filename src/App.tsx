@@ -21,6 +21,7 @@ import {
   collectChildMindMapIds,
   createNode,
   deleteNode,
+  expandAncestors,
   findNode,
   generateId,
   isDescendantNode,
@@ -53,6 +54,70 @@ interface MindMapExportBundle {
 
 const SETTINGS_STORAGE_KEY = 'hierarchicalMindMap.settings'
 const WORKSPACE_LAYOUT_STORAGE_KEY = 'mindnest.workspaceLayout'
+
+function getUrlMindMapState() {
+  const params = new URLSearchParams(window.location.search)
+
+  return {
+    mapId: params.get('map') || ROOT_MAP_ID,
+    nodeId: params.get('node'),
+  }
+}
+
+function updateUrlMindMapState(mapId: string, nodeId: string) {
+  const url = new URL(window.location.href)
+
+  if (mapId === ROOT_MAP_ID) {
+    url.searchParams.delete('map')
+  } else {
+    url.searchParams.set('map', mapId)
+  }
+
+  url.searchParams.set('node', nodeId)
+  window.history.replaceState(null, '', url)
+}
+
+async function findMindMapBreadcrumb(targetMapId: string, rootDocument: MindMapDocument) {
+  if (targetMapId === rootDocument.id) {
+    return []
+  }
+
+  const visitedMapIds = new Set<string>()
+
+  async function visit(document: MindMapDocument, trail: MindMapDocument[]): Promise<MindMapDocument[] | null> {
+    if (visitedMapIds.has(document.id)) {
+      return null
+    }
+
+    visitedMapIds.add(document.id)
+
+    const childMapIds = collectChildMindMapIds(document.data.data)
+
+    for (const childMapId of childMapIds) {
+      const childDocument = await db.mindMaps.get(childMapId)
+
+      if (!childDocument) {
+        continue
+      }
+
+      const nextTrail = [...trail, document]
+
+      if (childDocument.id === targetMapId) {
+        return nextTrail
+      }
+
+      const found = await visit(childDocument, nextTrail)
+
+      if (found) {
+        return found
+      }
+    }
+
+    return null
+  }
+
+  return await visit(rootDocument, []) ?? []
+}
 
 const DEFAULT_SETTINGS: AppSettings = {
   theme: 'system',
@@ -111,7 +176,7 @@ function loadSettings(): AppSettings {
 }
 
 function App() {
-  const [currentMapId, setCurrentMapId] = useState(ROOT_MAP_ID)
+  const [currentMapId, setCurrentMapId] = useState(() => getUrlMindMapState().mapId)
   const [document, setDocument] = useState<MindMapDocument | null>(null)
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>('mindmap')
@@ -146,8 +211,26 @@ function App() {
       const nextDocument = currentMapId === ROOT_MAP_ID ? root : await db.mindMaps.get(currentMapId)
 
       if (!cancelled && nextDocument) {
-        setDocument(nextDocument)
-        setSelectedNodeId(nextDocument.data.data.id)
+        const urlState = getUrlMindMapState()
+        const urlNodeId = urlState.mapId === currentMapId && urlState.nodeId && findNode(nextDocument.data.data, urlState.nodeId)
+          ? urlState.nodeId
+          : nextDocument.data.data.id
+        const nextDocumentWithExpandedTarget = {
+          ...nextDocument,
+          data: {
+            ...nextDocument.data,
+            data: expandAncestors(nextDocument.data.data, urlNodeId),
+          },
+        }
+        const nextBreadcrumb = await findMindMapBreadcrumb(nextDocument.id, root)
+
+        if (cancelled) {
+          return
+        }
+
+        setDocument(nextDocumentWithExpandedTarget)
+        setSelectedNodeId(urlNodeId)
+        setBreadcrumb(nextBreadcrumb)
         setUndoStack([])
         setRedoStack([])
         setPendingEditNodeId(null)
@@ -162,6 +245,41 @@ function App() {
       cancelled = true
     }
   }, [currentMapId])
+
+  useEffect(() => {
+    if (document && selectedNodeId && findNode(document.data.data, selectedNodeId)) {
+      updateUrlMindMapState(currentMapId, selectedNodeId)
+    }
+  }, [currentMapId, document, selectedNodeId])
+
+  useEffect(() => {
+    window.document.title = document?.data.data.topic.trim() || 'MindNest'
+  }, [document])
+
+  useEffect(() => {
+    const handlePopState = () => {
+      const urlState = getUrlMindMapState()
+      setCurrentMapId(urlState.mapId)
+
+      if (document && urlState.mapId === currentMapId && urlState.nodeId && findNode(document.data.data, urlState.nodeId)) {
+        setDocument((current) => current
+          ? {
+            ...current,
+            data: {
+              ...current.data,
+              data: expandAncestors(current.data.data, urlState.nodeId!),
+            },
+          }
+          : current,
+        )
+        setSelectedNodeId(urlState.nodeId)
+      }
+    }
+
+    window.addEventListener('popstate', handlePopState)
+
+    return () => window.removeEventListener('popstate', handlePopState)
+  }, [currentMapId, document])
 
   useEffect(() => {
     if (!document) {
@@ -400,6 +518,16 @@ function App() {
     }
 
     setPendingEditNodeId(null)
+  }
+
+  function handleMindMapViewChange(nextData: MindMapDocument['data']) {
+    setDocument((current) => current
+      ? {
+        ...current,
+        data: nextData,
+      }
+      : current,
+    )
   }
 
   function handleDeleteNode(node = selectedNode) {
@@ -1024,6 +1152,7 @@ function App() {
                 onUndo={handleUndo}
                 onRedo={handleRedo}
                 onMindChange={handleMindMapChange}
+                onMindViewChange={handleMindMapViewChange}
                 onSelectNode={handleSelectNode}
                 onNodeContextMenu={(nodeId, position) => {
                   setChildMindMapPopover(null)
@@ -1060,16 +1189,9 @@ function App() {
               setMemoPreviewRequest((request) => request + 1)
               setMindMapFocusRequest((request) => request + 1)
             }}
-            onHideMemo={() => updateWorkspaceLayout('map-only')}
           />
         )}
       </section>
-
-      {workspaceLayout === 'map-only' && (
-        <button type="button" className="show-memo-button" onClick={() => updateWorkspaceLayout('split')} aria-label="Show memo" title="Show memo">
-          ◂
-        </button>
-      )}
 
       {viewMode === 'mindmap' && childMindMapPopover && childMindMapPopoverNode && !contextMenu && (
         <div

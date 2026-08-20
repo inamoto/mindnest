@@ -1,23 +1,29 @@
 import { useLayoutEffect, useRef } from 'react'
 import type { ChangeEvent, KeyboardEvent, RefObject } from 'react'
 
+type TextSelection = { start: number; end: number; direction: 'forward' | 'backward' | 'none' }
+
 interface MarkdownEditorProps {
   value: string
   editorRef?: RefObject<HTMLTextAreaElement | null>
+  onSelectionChange?: (selection: TextSelection) => void
   onChange: (value: string) => void
   onBlur?: () => void
   onEscape?: () => void
 }
 
-export function MarkdownEditor({ value, editorRef, onChange, onBlur, onEscape }: MarkdownEditorProps) {
-  const selectionRef = useRef<{ start: number; end: number; direction: 'forward' | 'backward' | 'none' } | null>(null)
+export function MarkdownEditor({ value, editorRef, onSelectionChange, onChange, onBlur, onEscape }: MarkdownEditorProps) {
+  const selectionRef = useRef<TextSelection | null>(null)
 
   function rememberSelection(textarea: HTMLTextAreaElement) {
-    selectionRef.current = {
+    const nextSelection = {
       start: textarea.selectionStart,
       end: textarea.selectionEnd,
       direction: textarea.selectionDirection,
     }
+
+    selectionRef.current = nextSelection
+    onSelectionChange?.(nextSelection)
   }
 
   useLayoutEffect(() => {
@@ -60,7 +66,13 @@ export function MarkdownEditor({ value, editorRef, onChange, onBlur, onEscape }:
       className="markdown-editor"
       value={value}
       onChange={handleChange}
-      onBlur={onBlur}
+      onBlur={(event) => {
+        rememberSelection(event.currentTarget)
+        onBlur?.()
+      }}
+      onSelect={(event) => rememberSelection(event.currentTarget)}
+      onClick={(event) => rememberSelection(event.currentTarget)}
+      onKeyUp={(event) => rememberSelection(event.currentTarget)}
       onKeyDown={(event) => {
         stopNativeShortcutPropagation(event)
 
