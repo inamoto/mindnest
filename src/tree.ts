@@ -52,7 +52,9 @@ export function addChildNode(root: MindMapNodeData, parentId: string, newNode = 
 }
 
 export function cloneNodeWithNewIds(node: MindMapNodeData): MindMapNodeData {
-  const { childMindMapId: _childMindMapId, dependsOn: _dependsOn, children, ...copyableNode } = node
+  const { children, ...copyableNode } = node
+  delete copyableNode.childMindMapId
+  delete copyableNode.dependsOn
 
   return {
     ...copyableNode,
@@ -133,6 +135,42 @@ export function findParentNode(root: MindMapNodeData, nodeId: string): MindMapNo
   }
 
   return null
+}
+
+export function collectAncestorNodeIds(root: MindMapNodeData, nodeId: string): string[] {
+  if (root.id === nodeId) {
+    return []
+  }
+
+  for (const child of root.children ?? []) {
+    if (child.id === nodeId) {
+      return [root.id]
+    }
+
+    const childAncestors = collectAncestorNodeIds(child, nodeId)
+
+    if (childAncestors.length > 0) {
+      return [root.id, ...childAncestors]
+    }
+  }
+
+  return []
+}
+
+export function expandAncestors(root: MindMapNodeData, nodeId: string): MindMapNodeData {
+  const ancestorIds = new Set(collectAncestorNodeIds(root, nodeId))
+
+  if (ancestorIds.size === 0) {
+    return root
+  }
+
+  return updateNode(root, root.id, function expandNode(node): MindMapNodeData {
+    return {
+      ...node,
+      expanded: ancestorIds.has(node.id) ? true : node.expanded,
+      children: node.children?.map(expandNode) ?? [],
+    }
+  })
 }
 
 export function flattenNodes(root: MindMapNodeData): MindMapNodeData[] {

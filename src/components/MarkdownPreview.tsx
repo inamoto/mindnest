@@ -1,3 +1,4 @@
+import type { MouseEvent } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
@@ -8,7 +9,7 @@ import 'katex/dist/katex.min.css'
 
 interface MarkdownPreviewProps {
   value: string
-  onDoubleClick?: () => void
+  onClick?: (event: MouseEvent<HTMLDivElement>) => void
 }
 
 
@@ -24,11 +25,11 @@ const markdownComponents: Components = {
   ),
 }
 
-export function MarkdownPreview({ value, onDoubleClick }: MarkdownPreviewProps) {
+export function MarkdownPreview({ value, onClick }: MarkdownPreviewProps) {
   const normalizedValue = normalizeDisplayMath(value)
 
   return (
-    <div className="markdown-preview" onDoubleClick={onDoubleClick}>
+    <div className="markdown-preview" onClick={onClick}>
       {value.trim() ? (
         <ReactMarkdown remarkPlugins={[remarkGfm, remarkMath]} rehypePlugins={[rehypeKatex, rehypeSelectedHighlight]} components={markdownComponents}>{normalizedValue}</ReactMarkdown>
       ) : (
