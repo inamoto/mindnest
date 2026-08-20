@@ -640,16 +640,10 @@
   flex: 0 0 auto;
 }
 
-.memo-header-actions button,
-.show-memo-button {
+.memo-header-actions button {
   min-width: 36px;
   font-size: 16px;
   line-height: 1;
-}
-
-.memo-tabs {
-  display: flex;
-  gap: 6px;
 }
 
 .markdown-help {
@@ -684,13 +678,6 @@
   font-family: var(--mono);
 }
 
-.show-memo-button {
-  position: fixed;
-  top: 72px;
-  right: 16px;
-  z-index: 9;
-  box-shadow: var(--shadow);
-}
 
 
 button {
